@@ -29,7 +29,7 @@ export function selectTimelineEvents(
   return [...selected.values()]
     .sort((a, b) =>
       a.date === b.date
-        ? (a.time ?? "").localeCompare(b.time ?? "")
+        ? a.createdAt - b.createdAt || a.id.localeCompare(b.id)
         : b.date.localeCompare(a.date),
     )
     .slice(0, MAX_TIMELINE_EVENTS);
@@ -44,7 +44,7 @@ export function renderTimelineMarkdown(events: TimelineEvent[]): string {
       currentDate = event.date;
       lines.push(`### ${event.date}`, "");
     }
-    lines.push(event.time ? `**${event.title}** · ${event.time}` : `**${event.title}**`);
+    lines.push(`**${event.title}**`);
     if (event.description) lines.push(event.description);
     const meta = [
       ...event.tags.map((tag) => `#${tag}`),
@@ -58,8 +58,8 @@ export function renderTimelineMarkdown(events: TimelineEvent[]): string {
 
 /**
  * Plain-text rendering of a timeline for chat code blocks: one line per event
- * with an aligned date and time column, long titles wrapped with a hanging
- * indent. Newest first; at most {@link MAX_TEXT_EVENTS} events are listed.
+ * with a date column, long titles wrapped with a hanging indent. Newest first;
+ * at most {@link MAX_TEXT_EVENTS} events are listed.
  */
 export function renderTimelineText(events: TimelineEvent[]): string {
   if (events.length === 0) return "";
@@ -71,8 +71,7 @@ export function renderTimelineText(events: TimelineEvent[]): string {
 
   const shown = events.slice(0, MAX_TEXT_EVENTS);
   for (const event of shown) {
-    const prefix = `${event.date}  ${(event.time ?? "").padEnd(5)}  `;
-    lines.push(...wrapTitle(prefix, event.title));
+    lines.push(...wrapTitle(`${event.date}  `, event.title));
   }
   const hidden = events.length - shown.length;
   if (hidden > 0) lines.push(`… and ${hidden} more`);

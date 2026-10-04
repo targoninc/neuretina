@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { ArtifactRepository } from "../src/domain/artifacts/ArtifactRepository.ts";
 import { SqliteDatabase } from "../src/infra/db/SqliteDatabase.ts";
 import { migrations, runMigrations } from "../src/infra/db/migrations.ts";
+import { MemoryArtifactFileStore } from "../src/infra/files.ts";
 
 function repo(): ArtifactRepository {
   return new ArtifactRepository(new SqliteDatabase(":memory:"));
@@ -200,6 +201,115 @@ describe("artifact schema", () => {
       raw.query<{ source_report_id: string }, []>("SELECT source_report_id FROM timeline_events").get()
         ?.source_report_id,
     ).toBe("b1");
+  });
+
+  test("restores report-text children for containers that held content", () => {
+    const raw = new Database(":memory:");
+    for (const migration of migrations.filter((entry) => entry.id < 25)) raw.exec(migration.sql);
+    raw.exec(`
+      INSERT INTO artifacts (id, kind, name, content_type, content, metadata, parent_id, workflow, correlation_id, context_id, created_at)
+      VALUES
+        ('r1', 'report', 'Rust', 'text/markdown', '# Hello', '{"topics":["Rust"],"narration":"spoken","sources":[{"title":"X","url":"https://x","provider":"exa"}],"artifactIds":["a1"]}', NULL, 'briefing', 'run-1', 'default', 100),
+        ('a1', 'audio', 'Rust (audio)', 'audio/ogg', NULL, '{"reportId":"r1"}', 'r1', 'briefing', 'run-1', 'default', 110);
+    `);
+
+    const restore = migrations.find((migration) => migration.id === 25)!;
+    raw.exec(restore.sql);
+
+    const report = raw
+      .query<{ content: string | null; content_type: string; metadata: string }, []>(
+        "SELECT content, content_type, metadata FROM artifacts WHERE id = 'r1'",
+      )
+      .get()!;
+    expect(report.content).toBeNull();
+    expect(report.content_type).toBe("application/json");
+    const metadata = JSON.parse(report.metadata) as {
+      narration?: string;
+      sources?: unknown;
+      artifactIds: string[];
+    };
+    expect(metadata.narration).toBeUndefined();
+    expect(metadata.sources).toBeUndefined();
+
+    const text = raw
+      .query<{ id: string; content: string; metadata: string }, []>(
+        "SELECT id, content, metadata FROM artifacts WHERE kind = 'report-text'",
+      )
+      .get()!;
+    expect(text.content).toBe("# Hello");
+    expect(JSON.parse(text.metadata).narration).toBe("spoken");
+    expect(JSON.parse(text.metadata).sources).toEqual([
+      { title: "X", url: "https://x", provider: "exa" },
+    ]);
+    // The text primitive is appended after the existing attachments.
+    expect(metadata.artifactIds).toEqual(["a1", text.id]);
+  });
+
+  test("splits artifact payloads and type fields into their stores", () => {
+    const raw = new Database(":memory:");
+    for (const migration of migrations.filter((entry) => entry.id < 26)) raw.exec(migration.sql);
+    raw.exec(`
+      INSERT INTO artifacts (id, kind, name, content_type, content, data, metadata, parent_id, workflow, correlation_id, context_id, created_at)
+      VALUES
+        ('r1', 'report', 'Rust', 'application/json', NULL, NULL, '{"topics":["Rust"],"artifactIds":["t1","a1"]}', NULL, 'briefing', 'run-1', 'default', 100),
+        ('t1', 'report-text', 'Rust (text)', 'text/markdown', '# Hello', NULL, '{"narration":"spoken","sources":[{"title":"X","url":"https://x","provider":"exa"}]}', 'r1', 'briefing', 'run-1', 'default', 110),
+        ('a1', 'audio', 'Rust (audio)', 'audio/ogg', NULL, x'0102', '{"reportId":"r1","mime":"audio/ogg","durationMs":1200}', 'r1', 'briefing', 'run-1', 'default', 120),
+        ('tl1', 'timeline', 'Timeline', 'text/markdown', '## Timeline', NULL, '{"eventIds":["e1"],"reportId":"r1"}', 'r1', 'briefing', 'run-1', 'default', 130);
+    `);
+
+    const files = new MemoryArtifactFileStore();
+    const migration = migrations.find((entry) => entry.id === 26)!;
+    raw.transaction(() => {
+      raw.exec(migration.sql);
+      migration.run?.(raw, files);
+    })();
+
+    const text = raw
+      .query<{ content: string }, []>("SELECT content FROM artifact_texts WHERE artifact_id = 't1'")
+      .get()!;
+    expect(text.content).toBe("# Hello");
+
+    const links = raw
+      .query<{ artifact_id: string; target_kind: string; target_id: string }, []>(
+        "SELECT artifact_id, target_kind, target_id FROM artifact_links ORDER BY artifact_id, position",
+      )
+      .all();
+    expect(links).toEqual([
+      { artifact_id: "r1", target_kind: "artifact", target_id: "t1" },
+      { artifact_id: "r1", target_kind: "artifact", target_id: "a1" },
+      { artifact_id: "tl1", target_kind: "event", target_id: "e1" },
+    ]);
+
+    const reportText = raw
+      .query<{ narration: string; sources: string }, []>(
+        "SELECT narration, sources FROM report_texts WHERE artifact_id = 't1'",
+      )
+      .get()!;
+    expect(reportText.narration).toBe("spoken");
+    expect(JSON.parse(reportText.sources)).toEqual([
+      { title: "X", url: "https://x", provider: "exa" },
+    ]);
+
+    const audio = raw
+      .query<{ duration_ms: number; byte_size: number }, []>(
+        "SELECT duration_ms, byte_size FROM audio_artifacts JOIN artifacts ON artifacts.id = audio_artifacts.artifact_id",
+      )
+      .get()!;
+    expect(audio).toEqual({ duration_ms: 1200, byte_size: 2 });
+    expect(files.read("a1")).toEqual(new Uint8Array([1, 2]));
+
+    // The registry keeps only generic metadata.
+    const registry = raw
+      .query<{ metadata: string }, []>("SELECT metadata FROM artifacts WHERE id = 'a1'")
+      .get()!;
+    expect(JSON.parse(registry.metadata)).toEqual({});
+
+    const columns = raw
+      .query<{ name: string }, []>("PRAGMA table_info(artifacts)")
+      .all()
+      .map((row) => row.name);
+    expect(columns).not.toContain("content");
+    expect(columns).not.toContain("data");
   });
 
   test("repairs legacy report attribution to the run's workflow", () => {

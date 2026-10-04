@@ -25,13 +25,11 @@ describe("EventRepository", () => {
 
     const first = repo.upsert({
       date: "2026-09-01",
-      time: "9:05",
       entities: ["Nvidia", "nvidia"],
       tags: ["Markets", "AI"],
       title: "Nvidia earnings",
       description: "Beat consensus.",
     });
-    expect(first.time).toBe("09:05");
     expect(first.entities).toEqual(["Nvidia"]);
     expect(first.tags).toEqual(["Markets", "AI"]);
     expect(repo.count()).toBe(1);
@@ -393,18 +391,18 @@ describe("EventTimeline", () => {
 
   test("renders a monospace timeline for chat code blocks", () => {
     const events = [
-      event({ id: "b", date: "2026-09-30", time: "14:05", title: "Nvidia beats estimates" }),
+      event({ id: "b", date: "2026-09-30", title: "Nvidia beats estimates" }),
       event({ id: "a", date: "2026-09-30", title: "Rust 1.90 released" }),
-      event({ id: "c", date: "2026-09-20", time: "09:00", title: "A very long headline that wraps onto a continuation line because it exceeds the column width of the code block" }),
+      event({ id: "c", date: "2026-09-20", title: "A very long headline that wraps onto a continuation line because it exceeds the column width of the code block" }),
     ];
 
     const text = renderTimelineText(events);
     const lines = text.split("\n");
     expect(lines[0]).toBe("Timeline · 3 events · 2026-09-20 → 2026-09-30");
-    expect(text).toContain("2026-09-30  14:05  Nvidia beats estimates");
-    expect(text).toContain("2026-09-30         Rust 1.90 released");
+    expect(text).toContain("2026-09-30  Nvidia beats estimates");
+    expect(text).toContain("2026-09-30  Rust 1.90 released");
     // Long titles wrap with a hanging indent under the title column.
-    expect(lines.some((line) => /^ {19}\S/.test(line))).toBe(true);
+    expect(lines.some((line) => /^ {12}\S/.test(line))).toBe(true);
     // Every event title survives the wrap.
     for (const entry of events) {
       expect(text.replace(/\s+/g, " ")).toContain(entry.title);

@@ -4,6 +4,7 @@
   import iconPayments from "@ktibow/iconset-material-symbols/payments";
   import iconSchedule from "@ktibow/iconset-material-symbols/schedule";
   import type { ArtifactInfo, DeliveryRecord, WorkflowRunDetail } from "../lib/api";
+  import { isReportContainer } from "../lib/artifacts";
   import { formatDateTime, formatRelativeTime } from "../lib/format";
   import { costLabel, outputPreview, triggerLabel } from "../lib/workflows";
   import DataList from "./DataList.svelte";
@@ -23,6 +24,8 @@
   }
 
   let { run, deliveries, deleting, cancelling, ondelete, oncancel, onopenartifact }: Props = $props();
+
+  const artifacts = $derived(run ? run.artifacts.filter((artifact) => !isReportContainer(artifact)) : []);
 </script>
 
 <Pane
@@ -60,7 +63,7 @@
     />
 
     <h3 class="subhead">Artifacts</h3>
-    <DataList items={run.artifacts} empty="This run produced no artifacts.">
+    <DataList items={artifacts} empty="This run produced no artifacts.">
       {#snippet children(artifact)}
         <div class="entry">
           <ListItem

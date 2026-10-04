@@ -20,20 +20,18 @@ export interface TimelineGroupingOptions {
 export const MIN_MARKER_GAP_PX = 96;
 const FALLBACK_LENGTH_PX = 900;
 
-/** Milliseconds for an event; events without a time sit at the start of the day. */
+/** Midnight of an event's calendar day, in local time. */
 export function eventTime(event: TimelineEvent): number {
-  const time = event.time && /^\d{1,2}:\d{2}$/.test(event.time) ? event.time : "00:00";
-  const parsed = Date.parse(`${event.date}T${time}:00`);
+  const parsed = Date.parse(`${event.date}T00:00:00`);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/** "12 Mar 2026" and "12 Mar 2026 · 09:30" for popovers. */
+/** "12 Mar 2026" for popovers. */
 export function formatEventWhen(event: TimelineEvent): string {
   const date = new Date(`${event.date}T00:00:00`);
-  const text = Number.isNaN(date.getTime())
+  return Number.isNaN(date.getTime())
     ? event.date
     : date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-  return event.time ? `${text} · ${event.time}` : text;
 }
 
 /** Up to this many titles show per marker; the rest collapse into one row. */

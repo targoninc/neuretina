@@ -88,7 +88,6 @@ function setup(options: SetupOptions = {}) {
           events: [
             {
               date: "2026-09-30",
-              time: "09:00",
               title: "Rust 1.90 released",
               description: "The Rust team shipped 1.90 with faster builds.",
               entities: ["Rust", "Rust Foundation"],
@@ -598,6 +597,26 @@ describe("BriefingWorkflow", () => {
     expect(compilerInputs[0]).toContain("Another source");
   });
 
+  test("passes the workflow's earlier briefings to the compiler for deduping", async () => {
+    const { workflow, topics, bus, statuses, compilerInputs } = setup();
+    topics.add({ name: "Rust" });
+
+    await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-prev-1", bus, logger: log, statuses },
+    );
+    await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-prev-2", bus, logger: log, statuses },
+    );
+
+    expect(compilerInputs).toHaveLength(2);
+    expect(compilerInputs[0]).not.toContain("previousBriefings");
+    expect(compilerInputs[1]).toContain("previousBriefings");
+    // The first report's markdown is what the second compile dedupes against.
+    expect(compilerInputs[1]).toContain("All quiet");
+  });
+
   test("appends the follow-up findings as an Implications section that is also spoken", async () => {
     const { workflow, topics, reports, bus, statuses, compilerInputs, dispatcherInputs } = setup({
       followups: true,
@@ -991,7 +1010,7 @@ describe("BriefingWorkflow", () => {
 
     const timeline = sender.sent.find((entry) => entry.text.startsWith("Timeline ·"));
     expect(timeline).toBeTruthy();
-    expect(timeline?.text).toContain("2026-09-30  09:00  Rust 1.90 released");
+    expect(timeline?.text).toContain("2026-09-30  Rust 1.90 released");
     expect(timeline?.html).toContain("<pre><code>");
     expect(timeline?.html).toContain("Rust 1.90 released");
     expect(timeline?.html).toContain("</code></pre>");

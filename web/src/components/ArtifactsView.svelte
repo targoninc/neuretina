@@ -3,6 +3,7 @@
   import iconCategory from "@ktibow/iconset-material-symbols/category";
   import iconSearch from "@ktibow/iconset-material-symbols/search";
   import { commands } from "../lib/commands";
+  import { isReportContainer } from "../lib/artifacts";
   import type { ArtifactInfo } from "../lib/api";
   import { reportError } from "../lib/feedback";
   import { formatDateTime } from "../lib/format";
@@ -36,7 +37,9 @@
   async function loadList(): Promise<void> {
     loading = true;
     try {
-      artifacts = await commands.artifacts.search(query.trim() || undefined, { limit: 100 });
+      artifacts = (await commands.artifacts.search(query.trim() || undefined, { limit: 100 })).filter(
+        (artifact) => !isReportContainer(artifact),
+      );
     } catch (error) {
       reportError(error);
     } finally {

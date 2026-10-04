@@ -1,9 +1,12 @@
 import type { Database as BunDatabaseType } from "bun:sqlite";
+import { type ArtifactFileStore, MemoryArtifactFileStore } from "../files.ts";
 
 export interface Migration {
   id: number;
   name: string;
   sql: string;
+  /** Steps SQL cannot express (e.g. writing artifact payloads to files). */
+  run?: (db: BunDatabaseType, files: ArtifactFileStore) => void;
 }
 
 export const migrations: Migration[] = [
@@ -467,9 +470,144 @@ export const migrations: Migration[] = [
       ALTER TABLE status_entries ADD COLUMN kind TEXT;
     `,
   },
+  {
+    // A report container never holds content: it references its artifacts
+    // (a timeline, an audio file, the report-text primitive). Recreates the
+    // report-text child for databases that ran the short-lived revision which
+    // folded the text into the container.
+    id: 25,
+    name: "restore_report_text_artifacts",
+    sql: `
+      INSERT INTO artifacts (
+        id, kind, name, content_type, content, metadata, parent_id,
+        workflow, correlation_id, context_id, created_at
+      )
+      SELECT
+        lower(hex(randomblob(16))),
+        'report-text',
+        name,
+        content_type,
+        content,
+        json_object(
+          'narration', COALESCE(json_extract(metadata, '$.narration'), ''),
+          'sources', COALESCE(json_extract(metadata, '$.sources'), json('[]'))
+        ),
+        id,
+        workflow,
+        correlation_id,
+        context_id,
+        created_at
+      FROM artifacts
+      WHERE kind = 'report' AND content IS NOT NULL;
+
+      UPDATE artifacts
+      SET metadata = json_set(
+            json_remove(metadata, '$.narration', '$.sources'),
+            '$.artifactIds',
+            json_insert(
+              COALESCE(json_extract(metadata, '$.artifactIds'), json('[]')),
+              '$[#]',
+              (SELECT text.id FROM artifacts AS text
+               WHERE text.parent_id = artifacts.id AND text.kind = 'report-text')
+            )
+          ),
+          content = NULL,
+          content_type = 'application/json'
+      WHERE kind = 'report' AND content IS NOT NULL;
+    `,
+  },
+  {
+    // Artifacts become modular: the generic `artifacts` table keeps only the
+    // registry (id, kind, name, content type, size, generic metadata, refs and
+    // timestamps). Text payloads move to `artifact_texts`, binary payloads to
+    // files, ordered references (report children, timeline events) to
+    // `artifact_links`, and each kind's structured fields to its own table
+    // (`report_texts`, `audio_artifacts`).
+    id: 26,
+    name: "modular_artifact_storage",
+    sql: `
+      ALTER TABLE artifacts ADD COLUMN byte_size INTEGER;
+
+      CREATE TABLE artifact_texts (
+        artifact_id TEXT PRIMARY KEY REFERENCES artifacts(id) ON DELETE CASCADE,
+        content     TEXT NOT NULL
+      );
+      INSERT INTO artifact_texts (artifact_id, content)
+        SELECT id, content FROM artifacts WHERE content IS NOT NULL;
+
+      CREATE TABLE artifact_links (
+        artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+        position    INTEGER NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_id   TEXT NOT NULL,
+        PRIMARY KEY (artifact_id, position)
+      );
+      INSERT INTO artifact_links (artifact_id, position, target_kind, target_id)
+        SELECT a.id, CAST(link.key AS INTEGER), 'artifact', link.value
+        FROM artifacts a, json_each(a.metadata, '$.artifactIds') AS link
+        WHERE json_type(a.metadata, '$.artifactIds') = 'array';
+      INSERT INTO artifact_links (artifact_id, position, target_kind, target_id)
+        SELECT a.id, CAST(link.key AS INTEGER), 'event', link.value
+        FROM artifacts a, json_each(a.metadata, '$.eventIds') AS link
+        WHERE json_type(a.metadata, '$.eventIds') = 'array';
+
+      CREATE TABLE report_texts (
+        artifact_id TEXT PRIMARY KEY REFERENCES artifacts(id) ON DELETE CASCADE,
+        narration   TEXT NOT NULL DEFAULT '',
+        sources     TEXT NOT NULL DEFAULT '[]'
+      );
+      INSERT INTO report_texts (artifact_id, narration, sources)
+        SELECT id,
+               COALESCE(json_extract(metadata, '$.narration'), ''),
+               COALESCE(json_extract(metadata, '$.sources'), json('[]'))
+        FROM artifacts WHERE kind = 'report-text';
+
+      CREATE TABLE audio_artifacts (
+        artifact_id TEXT PRIMARY KEY REFERENCES artifacts(id) ON DELETE CASCADE,
+        duration_ms INTEGER
+      );
+      INSERT INTO audio_artifacts (artifact_id, duration_ms)
+        SELECT id, json_extract(metadata, '$.durationMs')
+        FROM artifacts WHERE kind = 'audio'
+          AND json_extract(metadata, '$.durationMs') IS NOT NULL;
+
+      UPDATE artifacts
+        SET metadata = json_remove(
+          metadata,
+          '$.artifactIds', '$.eventIds', '$.narration', '$.sources',
+          '$.durationMs', '$.reportId', '$.mime'
+        );
+    `,
+    run: (db, files) => {
+      const rows = db
+        .query<{ id: string; data: Uint8Array }, []>(
+          "SELECT id, data FROM artifacts WHERE data IS NOT NULL",
+        )
+        .all();
+      for (const row of rows) {
+        files.write(row.id, new Uint8Array(row.data));
+        db.query("UPDATE artifacts SET byte_size = ? WHERE id = ?").run(
+          row.data.byteLength,
+          row.id,
+        );
+      }
+      db.exec("ALTER TABLE artifacts DROP COLUMN content; ALTER TABLE artifacts DROP COLUMN data;");
+    },
+  },
+  {
+    // Events are dated, not timed: the calendar day is all the timeline needs.
+    id: 27,
+    name: "timeline_event_dates_only",
+    sql: `
+      ALTER TABLE timeline_events DROP COLUMN time;
+    `,
+  },
 ];
 
-export function runMigrations(db: BunDatabaseType): void {
+export function runMigrations(
+  db: BunDatabaseType,
+  files: ArtifactFileStore = new MemoryArtifactFileStore(),
+): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
       id         INTEGER PRIMARY KEY,
@@ -502,6 +640,7 @@ export function runMigrations(db: BunDatabaseType): void {
 
     const apply = db.transaction(() => {
       db.exec(migration.sql);
+      migration.run?.(db, files);
       db.query("INSERT INTO _migrations (id, name, applied_at) VALUES (?, ?, ?)").run(
         migration.id,
         migration.name,

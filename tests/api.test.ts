@@ -699,7 +699,6 @@ describe("webhook gateway", () => {
   test("lists timeline events by id for rendered timelines", async () => {
     const first = kernel.events.upsert({
       date: "2026-02-03",
-      time: "09:30",
       entities: ["Nvidia"],
       tags: ["Markets"],
       title: "Nvidia earnings",
@@ -707,12 +706,11 @@ describe("webhook gateway", () => {
     });
     const second = kernel.events.upsert({ date: "2026-02-10", title: "Rust 1.90" });
 
-    const selected = await call<Array<{ id: string; title: string; time?: string; tags: string[] }>>(
+    const selected = await call<Array<{ id: string; title: string; tags: string[] }>>(
       "timeline.event.list",
       { ids: [first.id, second.id] },
     );
     expect(selected.map((event) => event.id)).toEqual([second.id, first.id]);
-    expect(selected[1]?.time).toBe("09:30");
     expect(selected[1]?.tags).toEqual(["Markets"]);
 
     const empty = await call<unknown[]>("timeline.event.list", { ids: [] });

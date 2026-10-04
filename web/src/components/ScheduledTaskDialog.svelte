@@ -21,7 +21,9 @@
   let voiceEnabled = $state(true);
   let saving = $state(false);
 
-  const workflowOptions = $derived(workflows.map((entry) => ({ text: entry.id, value: entry.id })));
+  const workflowOptions = $derived(
+    workflows.map((entry) => ({ text: entry.title || entry.id, value: entry.id })),
+  );
   const canSave = $derived(
     !saving && name.trim() !== "" && cron.trim() !== "" && workflow !== "",
   );

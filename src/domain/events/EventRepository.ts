@@ -4,15 +4,13 @@ import { parseJsonValue } from "../../core/json.ts";
 
 /**
  * A dated event learned from reports: a row in the events table (never an
- * artifact) with a date, an optional time, the entities it relates to,
- * category tags, a title and a description.
+ * artifact) with a calendar date, the entities it relates to, category tags,
+ * a title and a description.
  */
 export interface TimelineEvent {
   id: string;
   /** ISO calendar date (YYYY-MM-DD). */
   date: string;
-  /** Time of day (HH:MM) when the source states one. */
-  time?: string;
   entities: string[];
   tags: string[];
   title: string;
@@ -27,7 +25,6 @@ export interface EventInput {
   /** Existing event to update; a new id is minted when absent. */
   id?: string;
   date: string;
-  time?: string;
   entities?: string[];
   tags?: string[];
   title: string;
@@ -62,7 +59,6 @@ export interface EventStore {
 interface EventRow {
   id: string;
   date: string;
-  time: string | null;
   entities: string;
   tags: string;
   title: string;
@@ -95,7 +91,7 @@ export class EventRepository implements EventStore {
     const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
     const rows = this.db.raw
       .query<EventRow, string[]>(
-        `SELECT * FROM timeline_events${where} ORDER BY date DESC, time ASC`,
+        `SELECT * FROM timeline_events${where} ORDER BY date DESC, created_at ASC, id ASC`,
       )
       .all(...params);
 
@@ -136,7 +132,6 @@ export class EventRepository implements EventStore {
     const event: TimelineEvent = {
       id: existing?.id ?? crypto.randomUUID(),
       date,
-      time: input.time !== undefined ? normalizeTime(input.time) : existing?.time,
       entities:
         input.entities !== undefined ? normalizeList(input.entities) : existing?.entities ?? [],
       tags: input.tags !== undefined ? normalizeList(input.tags) : existing?.tags ?? [],
@@ -151,11 +146,10 @@ export class EventRepository implements EventStore {
     this.db.raw
       .query(
         `INSERT INTO timeline_events
-           (id, date, time, entities, tags, title, description, source_report_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (id, date, entities, tags, title, description, source_report_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            date = excluded.date,
-           time = excluded.time,
            entities = excluded.entities,
            tags = excluded.tags,
            title = excluded.title,
@@ -166,7 +160,6 @@ export class EventRepository implements EventStore {
       .run(
         event.id,
         event.date,
-        event.time ?? null,
         JSON.stringify(event.entities),
         JSON.stringify(event.tags),
         event.title,
@@ -212,7 +205,6 @@ function toEvent(row: EventRow): TimelineEvent {
   return {
     id: row.id,
     date: row.date,
-    time: row.time ?? undefined,
     entities: parseStringList(row.entities),
     tags: parseStringList(row.tags),
     title: row.title,
@@ -243,15 +235,4 @@ function normalizeList(values: string[] | undefined): string[] {
     unique.push(trimmed);
   }
   return unique;
-}
-
-function normalizeTime(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
-  if (!match) return undefined;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) return undefined;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }

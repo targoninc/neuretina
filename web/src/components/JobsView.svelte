@@ -176,20 +176,6 @@
 >
   {#snippet actions()}
     {#if selected}
-      <label
-        class="inline-toggle"
-        title={selected.input.generateAudio === false
-          ? "Text only — switch on to include the voice message"
-          : "Voice + text — switch off for text-only delivery"}
-      >
-        <Switch
-          checked={selected.input.generateAudio !== false}
-          icons="both"
-          checkedIcon={iconMic}
-          uncheckedIcon={iconMicOff}
-          onchange={toggleVoice}
-        />
-      </label>
       <Button variant="tonal" iconType="left" onclick={run} disabled={running}>
         <Icon icon={iconPlay} /> Run now
       </Button>
@@ -226,7 +212,21 @@
       </div>
       <div class="fact">
         <span class="label">Delivery</span>
-        <span>{selected.input.generateAudio === false ? "text only" : "voice + text"}</span>
+        <label
+          class="inline-toggle"
+          title={selected.input.generateAudio === false
+            ? "Text only — switch on to include the voice message"
+            : "Voice + text — switch off for text-only delivery"}
+        >
+          <Switch
+            checked={selected.input.generateAudio !== false}
+            icons="both"
+            checkedIcon={iconMic}
+            uncheckedIcon={iconMicOff}
+            onchange={toggleVoice}
+          />
+          <span>{selected.input.generateAudio === false ? "text only" : "voice + text"}</span>
+        </label>
       </div>
     </div>
   {:else}

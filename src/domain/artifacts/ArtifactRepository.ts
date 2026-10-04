@@ -1,12 +1,17 @@
 import { NotFoundError } from "../../core/errors.ts";
-import { parseJsonObject } from "../../core/json.ts";
+import { parseJsonObject, parseJsonValue } from "../../core/json.ts";
 import type { SqliteDatabase } from "../../infra/db/SqliteDatabase.ts";
+import type { ArtifactFileStore } from "../../infra/files.ts";
 import { DEFAULT_CONTEXT_ID } from "../contexts/ContextRepository.ts";
+import { ARTIFACT_KINDS, type ArtifactKind } from "./ArtifactKinds.ts";
 
 /**
  * Generic artifact: any text or binary output a workflow produces (reports,
  * audio, notes, datasets, …), with references back to the run that made it
- * and, optionally, to a parent artifact it belongs to.
+ * and, optionally, to a parent artifact it belongs to. The registry row is
+ * thin: text payloads live in `artifact_texts`, binary payloads in files,
+ * ordered references in `artifact_links`, and kind-specific fields in the
+ * kind's table (see ArtifactKinds).
  */
 export interface Artifact {
   id: string;
@@ -61,22 +66,37 @@ interface ArtifactRow {
   kind: string;
   name: string | null;
   content_type: string;
-  content: string | null;
-  data?: Uint8Array | null;
+  byte_size: number | null;
   metadata: string;
   parent_id: string | null;
   workflow: string | null;
   correlation_id: string | null;
   context_id: string;
   created_at: number;
-  has_content: number;
-  has_data: number;
-  byte_size: number | null;
+  text_content: string | null;
+  artifact_ids: string;
+  event_ids: string;
 }
 
-const COLUMNS =
-  "id, kind, name, content_type, content, metadata, parent_id, workflow, correlation_id, context_id, created_at, " +
-  "(content IS NOT NULL) AS has_content, (data IS NOT NULL) AS has_data, length(data) AS byte_size";
+/** Registry columns plus the joined text payload and ordered references. */
+const SELECT = `
+  SELECT
+    a.id, a.kind, a.name, a.content_type, a.byte_size, a.metadata, a.parent_id,
+    a.workflow, a.correlation_id, a.context_id, a.created_at,
+    t.content AS text_content,
+    (SELECT json_group_array(target_id) FROM (
+      SELECT target_id FROM artifact_links AS l
+      WHERE l.artifact_id = a.id AND l.target_kind = 'artifact'
+      ORDER BY l.position
+    )) AS artifact_ids,
+    (SELECT json_group_array(target_id) FROM (
+      SELECT target_id FROM artifact_links AS l
+      WHERE l.artifact_id = a.id AND l.target_kind = 'event'
+      ORDER BY l.position
+    )) AS event_ids
+  FROM artifacts AS a
+  LEFT JOIN artifact_texts AS t ON t.artifact_id = a.id
+`;
 
 /** Storage-agnostic artifact store; swap the implementation without touching consumers. */
 export interface ArtifactStore {
@@ -95,61 +115,80 @@ export interface ArtifactStore {
   remove(id: string): Artifact;
 }
 
-/** Stores every workflow output in one table so the engine stays generic. */
+/** Stores every workflow output in one registry so the engine stays generic. */
 export class ArtifactRepository implements ArtifactStore {
-  constructor(private readonly db: SqliteDatabase) {}
+  private readonly kinds: Map<string, ArtifactKind>;
+
+  constructor(
+    private readonly db: SqliteDatabase,
+    private readonly files: ArtifactFileStore = db.artifactFiles,
+    kinds: readonly ArtifactKind[] = ARTIFACT_KINDS,
+  ) {
+    this.kinds = new Map(kinds.map((kind) => [kind.kind, kind]));
+  }
 
   create(input: CreateArtifactInput): Artifact {
     const id = crypto.randomUUID();
     const createdAt = Date.now();
-    const metadata = input.metadata ?? {};
+    const kind = this.kinds.get(input.kind);
+    const source = { ...(input.metadata ?? {}) };
+    const artifactIds = stringArray(source.artifactIds);
+    const eventIds = stringArray(source.eventIds);
+    delete source.artifactIds;
+    delete source.eventIds;
+    for (const field of kind?.fields ?? []) delete source[field];
+    const byteSize = input.data === undefined ? null : input.data.byteLength;
 
-    this.db.raw
-      .query(
-        `INSERT INTO artifacts
-           (id, kind, name, content_type, content, data, metadata, parent_id, workflow, correlation_id, context_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        input.kind,
-        input.name ?? null,
-        input.contentType,
-        input.content ?? null,
-        input.data ?? null,
-        JSON.stringify(metadata),
-        input.parentId ?? null,
-        input.workflow ?? null,
-        input.correlationId ?? null,
-        input.contextId ?? DEFAULT_CONTEXT_ID,
-        createdAt,
-      );
+    this.db.transaction(() => {
+      this.db.raw
+        .query(
+          `INSERT INTO artifacts
+             (id, kind, name, content_type, byte_size, metadata, parent_id,
+              workflow, correlation_id, context_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          input.kind,
+          input.name ?? null,
+          input.contentType,
+          byteSize,
+          JSON.stringify(source),
+          input.parentId ?? null,
+          input.workflow ?? null,
+          input.correlationId ?? null,
+          input.contextId ?? DEFAULT_CONTEXT_ID,
+          createdAt,
+        );
 
-    return {
-      id,
-      kind: input.kind,
-      name: input.name,
-      contentType: input.contentType,
-      content: input.content,
-      metadata,
-      parentId: input.parentId,
-      workflow: input.workflow,
-      correlationId: input.correlationId,
-      contextId: input.contextId ?? DEFAULT_CONTEXT_ID,
-      createdAt,
-      hasContent: input.content !== undefined,
-      hasData: input.data !== undefined,
-      byteSize: input.data?.byteLength,
-    };
+      if (input.content !== undefined) {
+        this.db.raw
+          .query("INSERT INTO artifact_texts (artifact_id, content) VALUES (?, ?)")
+          .run(id, input.content);
+      }
+      if (input.data !== undefined) {
+        this.files.write(id, input.data);
+      }
+      if (artifactIds.length > 0) this.writeLinks(id, "artifact", artifactIds);
+      if (eventIds.length > 0) this.writeLinks(id, "event", eventIds);
+      kind?.persist(this.db, id, input.metadata ?? {});
+    });
+
+    return this.get(id);
   }
 
   get(id: string, options: { includeData?: boolean } = {}): Artifact {
-    const columns = options.includeData ? `${COLUMNS}, data` : COLUMNS;
     const row = this.db.raw
-      .query<ArtifactRow, [string]>(`SELECT ${columns} FROM artifacts WHERE id = ?`)
+      .query<ArtifactRow, [string]>(`${SELECT} WHERE a.id = ?`)
       .get(id);
     if (!row) throw new NotFoundError(`Artifact ${id} not found`);
-    return toArtifact(row, options.includeData === true);
+
+    const artifact = this.resolve([row])[0]!;
+    if (options.includeData && row.byte_size !== null) {
+      const data = this.files.read(id);
+      if (data) artifact.data = data;
+    }
+    return artifact;
   }
 
   list(options: ListArtifactsOptions = {}): Artifact[] {
@@ -157,23 +196,23 @@ export class ArtifactRepository implements ArtifactStore {
     const params: Array<string | number> = [];
 
     if (options.kind) {
-      conditions.push("kind = ?");
+      conditions.push("a.kind = ?");
       params.push(options.kind);
     }
     if (options.workflow) {
-      conditions.push("workflow = ?");
+      conditions.push("a.workflow = ?");
       params.push(options.workflow);
     }
     if (options.parentId) {
-      conditions.push("parent_id = ?");
+      conditions.push("a.parent_id = ?");
       params.push(options.parentId);
     }
     if (options.correlationId) {
-      conditions.push("correlation_id = ?");
+      conditions.push("a.correlation_id = ?");
       params.push(options.correlationId);
     }
     if (options.contextId) {
-      conditions.push("context_id = ?");
+      conditions.push("a.context_id = ?");
       params.push(options.contextId);
     }
 
@@ -183,10 +222,10 @@ export class ArtifactRepository implements ArtifactStore {
 
     const rows = this.db.raw
       .query<ArtifactRow, Array<string | number>>(
-        `SELECT ${COLUMNS} FROM artifacts ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+        `${SELECT} ${where} ORDER BY a.created_at DESC, a.rowid DESC LIMIT ?`,
       )
       .all(...params);
-    return rows.map((row) => toArtifact(row, false));
+    return this.resolve(rows);
   }
 
   /** Text search over content, name and metadata (topics, …). */
@@ -199,39 +238,67 @@ export class ArtifactRepository implements ArtifactStore {
     if (!trimmed) return this.list({ kind: options.kind, contextId: options.contextId, limit });
 
     const like = `%${trimmed}%`;
-    const conditions = ["(content LIKE ? OR name LIKE ? OR metadata LIKE ?)"];
+    const conditions = ["(t.content LIKE ? OR a.name LIKE ? OR a.metadata LIKE ?)"];
     const params: Array<string | number> = [like, like, like];
     if (options.kind) {
-      conditions.push("kind = ?");
+      conditions.push("a.kind = ?");
       params.push(options.kind);
     }
     if (options.contextId) {
-      conditions.push("context_id = ?");
+      conditions.push("a.context_id = ?");
       params.push(options.contextId);
     }
     params.push(limit);
 
     const rows = this.db.raw
       .query<ArtifactRow, Array<string | number>>(
-        `SELECT ${COLUMNS} FROM artifacts WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+        `${SELECT} WHERE ${conditions.join(" AND ")} ORDER BY a.created_at DESC, a.rowid DESC LIMIT ?`,
       )
       .all(...params);
-    return rows.map((row) => toArtifact(row, false));
+    return this.resolve(rows);
   }
 
   updateMetadata(id: string, patch: Record<string, unknown>): Artifact {
     const artifact = this.get(id);
-    const metadata = { ...artifact.metadata, ...patch };
-    this.db.raw.query("UPDATE artifacts SET metadata = ? WHERE id = ?").run(JSON.stringify(metadata), id);
-    return { ...artifact, metadata };
+    const generic = { ...artifact.metadata };
+    delete generic.artifactIds;
+    delete generic.eventIds;
+    const kind = this.kinds.get(artifact.kind);
+    for (const field of kind?.fields ?? []) delete generic[field];
+
+    const rest = { ...patch };
+    if ("artifactIds" in rest) {
+      this.writeLinks(id, "artifact", stringArray(rest.artifactIds));
+      delete rest.artifactIds;
+    }
+    if ("eventIds" in rest) {
+      this.writeLinks(id, "event", stringArray(rest.eventIds));
+      delete rest.eventIds;
+    }
+
+    const kindFields: Record<string, unknown> = {};
+    for (const field of kind?.fields ?? []) {
+      if (!(field in rest)) continue;
+      kindFields[field] = rest[field];
+      delete rest[field];
+    }
+    if (Object.keys(kindFields).length > 0) kind!.persist(this.db, id, kindFields);
+
+    if (Object.keys(rest).length > 0) {
+      this.db.raw
+        .query("UPDATE artifacts SET metadata = ? WHERE id = ?")
+        .run(JSON.stringify({ ...generic, ...rest }), id);
+    }
+    return this.get(id);
   }
 
   /** Replaces the binary payload in place (regenerating a report's audio). */
   replaceData(id: string, data: Uint8Array, contentType?: string): Artifact {
     const artifact = this.get(id);
+    this.files.write(id, data);
     this.db.raw
-      .query("UPDATE artifacts SET data = ?, content_type = COALESCE(?, content_type) WHERE id = ?")
-      .run(data, contentType ?? null, id);
+      .query("UPDATE artifacts SET byte_size = ?, content_type = COALESCE(?, content_type) WHERE id = ?")
+      .run(data.byteLength, contentType ?? null, id);
     return {
       ...artifact,
       contentType: contentType ?? artifact.contentType,
@@ -243,34 +310,77 @@ export class ArtifactRepository implements ArtifactStore {
   /** Removes the artifact and everything referencing it as parent. */
   remove(id: string): Artifact {
     const artifact = this.get(id);
+    const children = this.db.raw
+      .query<{ id: string }, [string]>("SELECT id FROM artifacts WHERE parent_id = ?")
+      .all(id);
+    const removed = [id, ...children.map((child) => child.id)];
+    const marks = removed.map(() => "?").join(", ");
+
     this.db.transaction(() => {
       this.db.raw.query("DELETE FROM artifacts WHERE parent_id = ?").run(id);
       this.db.raw.query("DELETE FROM artifacts WHERE id = ?").run(id);
+      this.db.raw
+        .query(
+          `DELETE FROM artifact_links WHERE artifact_id IN (${marks}) OR target_id IN (${marks})`,
+        )
+        .run(...removed, ...removed);
     });
+    for (const target of removed) this.files.remove(target);
     return artifact;
+  }
+
+  private writeLinks(id: string, targetKind: string, targets: string[]): void {
+    this.db.raw
+      .query("DELETE FROM artifact_links WHERE artifact_id = ? AND target_kind = ?")
+      .run(id, targetKind);
+    const insert = this.db.raw.query(
+      "INSERT INTO artifact_links (artifact_id, position, target_kind, target_id) VALUES (?, ?, ?, ?)",
+    );
+    targets.forEach((target, position) => insert.run(id, position, targetKind, target));
+  }
+
+  private resolve(rows: ArtifactRow[]): Artifact[] {
+    const fields = new Map<string, Record<string, unknown>>();
+    for (const kind of this.kinds.values()) {
+      const ids = rows.filter((row) => row.kind === kind.kind).map((row) => row.id);
+      if (ids.length === 0) continue;
+      for (const [id, values] of kind.resolve(this.db, ids)) fields.set(id, values);
+    }
+
+    return rows.map((row) => {
+      const metadata = parseJsonObject(row.metadata);
+      const artifactIds = parseJsonValue<unknown>(row.artifact_ids, []);
+      const eventIds = parseJsonValue<unknown>(row.event_ids, []);
+      if (Array.isArray(artifactIds) && artifactIds.length > 0) {
+        metadata.artifactIds = artifactIds;
+      }
+      if (Array.isArray(eventIds) && eventIds.length > 0) {
+        metadata.eventIds = eventIds;
+      }
+      const extra = fields.get(row.id);
+      if (extra) Object.assign(metadata, extra);
+
+      return {
+        id: row.id,
+        kind: row.kind,
+        name: row.name ?? undefined,
+        contentType: row.content_type,
+        content: row.text_content ?? undefined,
+        metadata,
+        parentId: row.parent_id ?? undefined,
+        workflow: row.workflow ?? undefined,
+        correlationId: row.correlation_id ?? undefined,
+        contextId: row.context_id,
+        createdAt: row.created_at,
+        hasContent: row.text_content !== null,
+        hasData: row.byte_size !== null,
+        byteSize: row.byte_size ?? undefined,
+      };
+    });
   }
 }
 
-function toArtifact(row: ArtifactRow, withData: boolean): Artifact {
-  return {
-    id: row.id,
-    kind: row.kind,
-    name: row.name ?? undefined,
-    contentType: row.content_type,
-    content: row.content ?? undefined,
-    ...(withData && row.data ? { data: row.data } : {}),
-    metadata: parseMetadata(row.metadata),
-    parentId: row.parent_id ?? undefined,
-    workflow: row.workflow ?? undefined,
-    correlationId: row.correlation_id ?? undefined,
-    contextId: row.context_id,
-    createdAt: row.created_at,
-    hasContent: row.has_content === 1,
-    hasData: row.has_data === 1,
-    byteSize: row.byte_size ?? undefined,
-  };
-}
-
-function parseMetadata(value: string): Record<string, unknown> {
-  return parseJsonObject(value);
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
 }

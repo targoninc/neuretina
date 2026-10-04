@@ -38,21 +38,21 @@ describe("groupTimelineEvents", () => {
     expect(groups[0]?.events.map((entry) => entry.id)).toEqual(["a"]);
   });
 
-  test("orders by date and time from earliest to latest", () => {
+  test("orders by date from earliest to latest", () => {
     const groups = groupTimelineEvents(
       [
         event({ id: "late", date: "2026-01-31" }),
-        event({ id: "evening", date: "2026-01-01", time: "21:00" }),
-        event({ id: "morning", date: "2026-01-01", time: "09:00" }),
+        event({ id: "b", date: "2026-01-01" }),
+        event({ id: "a", date: "2026-01-01" }),
       ],
       { length: 1000 },
     );
     expect(groups.flatMap((group) => group.events.map((entry) => entry.id))).toEqual([
-      "morning",
-      "evening",
+      "a",
+      "b",
       "late",
     ]);
-    expect(groups[0]?.events[0]?.id).toBe("morning");
+    expect(groups[0]?.events[0]?.id).toBe("a");
     expect(groups[0]!.position).toBeLessThan(groups[1]?.position ?? 1);
     expect(groups.at(-1)?.events.at(-1)?.id).toBe("late");
     expect(groups.at(-1)?.position).toBe(1);
@@ -75,9 +75,9 @@ describe("groupTimelineEvents", () => {
 
   test("keeps markers on the same day grid as the scale marks", () => {
     const events = [
-      event({ id: "a", date: "2026-03-01", time: "09:00" }),
-      event({ id: "b", date: "2026-03-02", time: "12:00" }),
-      event({ id: "c", date: "2026-03-03", time: "18:00" }),
+      event({ id: "a", date: "2026-03-01" }),
+      event({ id: "b", date: "2026-03-02" }),
+      event({ id: "c", date: "2026-03-03" }),
     ];
     const groups = groupTimelineEvents(events, { length: 3000, minGap: 1 });
     const scale = timelineScale(events);
@@ -126,16 +126,16 @@ describe("horizontal layout", () => {
 });
 
 describe("groupTimelineDays", () => {
-  test("groups by calendar day, oldest first and time-ordered within a day", () => {
+  test("groups by calendar day, oldest first", () => {
     const days = groupTimelineDays([
       event({ id: "late", date: "2026-03-02" }),
-      event({ id: "evening", date: "2026-03-01", time: "21:00" }),
-      event({ id: "morning", date: "2026-03-01", time: "09:00" }),
+      event({ id: "b", date: "2026-03-01" }),
+      event({ id: "a", date: "2026-03-01" }),
       event({ id: "other", date: "2026-03-02" }),
     ]);
 
     expect(days.map((day) => day.key)).toEqual(["2026-03-01", "2026-03-02"]);
-    expect(days[0]?.events.map((entry) => entry.id)).toEqual(["morning", "evening"]);
+    expect(days[0]?.events.map((entry) => entry.id)).toEqual(["a", "b"]);
     expect(days[1]?.events.map((entry) => entry.id)).toEqual(["late", "other"]);
     expect(groupTimelineDays([])).toEqual([]);
   });
@@ -150,11 +150,10 @@ describe("formatEventDay", () => {
 });
 
 describe("formatEventWhen", () => {
-  test("includes the time only when the event has one", () => {
-    const withTime = formatEventWhen(event({ id: "a", date: "2026-03-12", time: "09:30" }));
-    expect(withTime).toContain("09:30");
-    const withoutTime = formatEventWhen(event({ id: "b", date: "2026-03-12" }));
-    expect(withoutTime).not.toContain("09:30");
+  test("shows the calendar date", () => {
+    const label = formatEventWhen(event({ id: "a", date: "2026-03-12" }));
+    expect(label.length).toBeGreaterThan(0);
+    expect(label).toContain("2026");
   });
 });
 
@@ -165,7 +164,7 @@ describe("timelineScale", () => {
 
   test("marks a single day once, in the middle", () => {
     const scale = timelineScale([
-      event({ id: "a", date: "2026-03-12", time: "09:30" }),
+      event({ id: "a", date: "2026-03-12" }),
       event({ id: "b", date: "2026-03-12" }),
     ]);
     expect(scale.unit).toBe("date");

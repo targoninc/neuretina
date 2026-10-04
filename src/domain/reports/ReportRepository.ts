@@ -147,7 +147,7 @@ export class ReportRepository implements ReportStore {
 
     if (existing) {
       this.artifacts.replaceData(existing, audio, mimeType);
-      this.artifacts.updateMetadata(existing, { reportId: id, mime: mimeType, ...audioDuration });
+      if (durationMs !== undefined) this.artifacts.updateMetadata(existing, { durationMs });
       return existing;
     }
 
@@ -160,7 +160,7 @@ export class ReportRepository implements ReportStore {
       workflow: report.workflow,
       correlationId: report.correlationId,
       contextId: report.contextId,
-      metadata: { reportId: id, mime: mimeType, ...audioDuration },
+      metadata: audioDuration,
     });
     this.attach(id, created.id);
     return created.id;
@@ -325,7 +325,7 @@ function toReport(artifact: Artifact, store: ArtifactStore): Report {
       ? (text.metadata.sources as ReportSource[])
       : [],
     audioArtifactId: audio?.id,
-    audioMime: audio ? (stringField(audio.metadata, "mime") ?? audio.contentType) : undefined,
+    audioMime: audio ? audio.contentType : undefined,
     audioDurationMs: audio ? numberField(audio.metadata, "durationMs") : undefined,
     hasAudio: Boolean(audio),
   };

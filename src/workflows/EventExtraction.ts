@@ -34,7 +34,6 @@ const TRAILING_STOPWORDS = new Set([
 
 export interface EventSuggestion {
   date: string;
-  time?: string;
   entities: string[];
   title: string;
   description: string;
@@ -74,7 +73,6 @@ interface Candidate {
 interface ReviewedEvent {
   id: string;
   date: string;
-  time?: string;
   entities: string[];
   title: string;
   description: string;
@@ -111,7 +109,6 @@ export class EventExtractor {
       const event = this.deps.events.upsert({
         id: target?.id,
         date: reviewed?.date ?? suggestion.date,
-        time: reviewed?.time ?? suggestion.time,
         entities: reviewed?.entities ?? suggestion.entities,
         tags: mergeTags(target?.tags, tags),
         title: reviewed?.title ?? suggestion.title,
@@ -150,7 +147,6 @@ export class EventExtractor {
       const reviewed = await this.review(
         {
           date: drop.date,
-          time: drop.time,
           entities: drop.entities,
           title: drop.title,
           description: drop.description,
@@ -163,7 +159,6 @@ export class EventExtractor {
       this.deps.events.upsert({
         id: target.id,
         date: reviewed.date,
-        time: reviewed.time,
         entities: [...target.entities, ...reviewed.entities, ...drop.entities],
         tags: mergeTags(target.tags, drop.tags),
         title: reviewed.title,
@@ -211,7 +206,6 @@ export class EventExtractor {
       if (!isIsoDate(date) || !title) continue;
       suggestions.push({
         date,
-        time: optionalTime(record.time),
         entities: stringList(record.entities),
         title,
         description: typeof record.description === "string" ? record.description.trim() : "",
@@ -231,7 +225,6 @@ export class EventExtractor {
       candidates: candidates.map(({ event, score }) => ({
         id: event.id,
         date: event.date,
-        time: event.time,
         title: event.title,
         description: event.description,
         entities: event.entities,
@@ -249,7 +242,6 @@ export class EventExtractor {
     return {
       id: candidate.event.id,
       date,
-      time: optionalTime(parsed.time) ?? suggestion.time,
       entities: Array.isArray(parsed.entities)
         ? stringList(parsed.entities)
         : suggestion.entities,
@@ -543,12 +535,6 @@ function isIsoDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function optionalTime(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return /^\d{1,2}:\d{2}$/.test(trimmed) ? trimmed : undefined;
-}
-
 function stringList(value: unknown): string[] {
   return Array.isArray(value)
     ? value
@@ -582,13 +568,12 @@ Rules:
 - At most 8 events; keep the most significant ones.
 
 Finish with a single JSON object and nothing else:
-{"events": [{"date": "YYYY-MM-DD", "time": "HH:MM", "title": "<4-5 word headline>", "description": "<1-2 sentences>", "entities": ["<entity>"]}]}
-Omit "time" when the material does not state one.`;
+{"events": [{"date": "YYYY-MM-DD", "title": "<4-5 word headline>", "description": "<1-2 sentences>", "entities": ["<entity>"]}]}`;
 
 const REVIEW_PROMPT = `You review a newly suggested event against existing stored events that may describe the same real-world happening.
 
 Decide:
-- "update": the suggestion and a candidate describe the same real-world happening, even when worded differently or when only one of them carries a detail (e.g. same company, body, product or decision). Return that candidate's id and the merged fields, preferring the most specific date/time and the most complete description.
+- "update": the suggestion and a candidate describe the same real-world happening, even when worded differently or when only one of them carries a detail (e.g. same company, body, product or decision). Return that candidate's id and the merged fields, preferring the most specific date and the most complete description.
 - "add": a genuinely different happening, even if it is related, by the same company, or about the same product line. Sharing a company or a model family is not enough.
 
 Reworded coverage of one happening is still one event: "Google challenges EU DMA orders in court", "Google appeals two EU Digital Markets Act orders" and "Google asks EU court to suspend DMA search-data order" all describe the same challenge — update.
@@ -596,7 +581,7 @@ Reworded coverage of one happening is still one event: "Google challenges EU DMA
 Always merge the title down to 4-5 words (never more than 6), the sharpest shared phrasing, e.g. "Google appeals DMA orders", "Anthropic releases Sonnet 5.5".
 
 Finish with a single JSON object and nothing else:
-{"action": "update"|"add", "id": "<candidate id when updating>", "date": "YYYY-MM-DD", "time": "HH:MM", "title": "…", "description": "…", "entities": ["<entity>"]}`;
+{"action": "update"|"add", "id": "<candidate id when updating>", "date": "YYYY-MM-DD", "title": "…", "description": "…", "entities": ["<entity>"]}`;
 
 const CATEGORIZE_PROMPT = `You are a strict categorizer for timeline events. You receive one event and the list of existing category tags (plus "other").
 

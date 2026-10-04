@@ -10,7 +10,7 @@ function readStoredOrientation(): TimelineOrientation {
   } catch {
     stored = null;
   }
-  return stored === "vertical" ? "vertical" : "horizontal";
+  return stored === "horizontal" ? "horizontal" : "vertical";
 }
 
 class TimelinePrefs {

@@ -149,6 +149,12 @@ interface Draft {
   narration: string;
 }
 
+/** An earlier briefing the compiler dedupes the new report against. */
+interface PreviousBrief {
+  date: string;
+  markdown: string;
+}
+
 /** The topics the briefing covers; the first of a growing set of inputs. */
 const TOPICS_INPUT: WorkflowInputSpec = {
   id: "topics",
@@ -208,6 +214,12 @@ Substance — every sentence must earn its place:
 - Before keeping a sentence, ask: would the reader be better informed by it than by nothing? If not, delete it.
 - Never write about missing information. No "there was no reaction", "coverage was thin", "it remains unclear", "a gap rather than agreement", "no news on X". If an aspect has no material, leave it out entirely — silence is not news.
 - No meta-commentary about the research process, the number of sources, or what was left out.
+
+Already-reported news — report only what changed:
+- You may receive earlier briefings. Before keeping a story, check whether it already appeared there.
+- If it did and nothing new has happened since, drop it entirely; the reader has already seen it.
+- If it did but something new happened, replace the old information with just the new development — no recap of the background.
+- Never mention that a story was covered before, and never write that nothing new happened; just leave the story out.
 
 Hard budget — brevity beats completeness:
 - The entire report, title aside, must stay under 150 words. Shorter is better.
@@ -687,6 +699,18 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     };
   }
 
+  /**
+   * The most recent briefings this workflow already delivered, newest first.
+   * The compiler drops stories that are already covered unless they moved on.
+   */
+  private previousBriefs(contextId: string, workflowId: string): PreviousBrief[] {
+    return this.deps.reports
+      .list(REPORT_HISTORY_SCAN, contextId)
+      .filter((report) => report.workflow === workflowId && report.markdown.trim().length > 0)
+      .slice(0, MAX_PREVIOUS_BRIEFS)
+      .map((report) => ({ date: isoDate(report.createdAt), markdown: report.markdown }));
+  }
+
   private async compileStep(ctx: StepContext): Promise<StepResult> {
     const research = inputValue(ctx, "research") as TextPortValue | undefined;
     if (!research) return { outputs: {} };
@@ -698,9 +722,12 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     });
     try {
       compileSpan?.update("Waiting for the compiler model");
+      const workflowId = ctx.run.run?.workflow ?? this.definition.id;
+      const previous = this.previousBriefs(ctx.run.contextId ?? DEFAULT_CONTEXT_ID, workflowId);
       const draft = await this.compile(
         { topics: topicNames, notes: research.text, sources: sourcesOf(research) },
         ctx.run,
+        previous,
       );
       if (draft.usage) {
         compileSpan?.addCost(ctx.run.cost?.addLlm("Compilation", draft.usage) ?? 0);
@@ -921,13 +948,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         name: `Timeline · ${selected.length} event(s)`,
         contentType: "text/markdown",
         content: markdown,
-        metadata: {
-          eventIds: selected.map((event) => event.id),
-          from: selected.at(-1)?.date,
-          to: selected[0]?.date,
-          count: selected.length,
-          reportId,
-        },
+        metadata: { eventIds: selected.map((event) => event.id) },
         parentId: report.artifactId,
         workflow: workflowId,
         correlationId,
@@ -1211,8 +1232,9 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
   private async compile(
     research: { topics: string[]; notes: string; sources: ReportSource[] },
     context: WorkflowContext,
+    previous: PreviousBrief[],
   ): Promise<{ markdown: string; narration: string; usage: LlmUsage }> {
-    const draft = await this.requestCompilation(research, context);
+    const draft = await this.requestCompilation(research, context, previous);
     const draftWords = wordCount(draft.markdown);
 
     if (draftWords <= HARD_WORD_CEILING) return draft;
@@ -1221,7 +1243,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     // for over-long drafts before anything is spoken or delivered.
     context.logger.warn("report over word budget; compressing", { words: draftWords });
     try {
-      const compressed = await this.requestCompilation(research, context, {
+      const compressed = await this.requestCompilation(research, context, previous, {
         draft: draft.markdown,
         words: draftWords,
       });
@@ -1239,6 +1261,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
   private async requestCompilation(
     research: { topics: string[]; notes: string; sources: ReportSource[] },
     context: WorkflowContext,
+    previous: PreviousBrief[],
     compress?: { draft: string; words: number },
   ): Promise<{ markdown: string; narration: string; usage: LlmUsage }> {
     const userContent = compress
@@ -1255,6 +1278,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
             n: index + 1,
             title: source.title,
           })),
+          ...(previous.length > 0 ? { previousBriefings: previous } : {}),
           notes: research.notes,
         });
 
@@ -1460,6 +1484,10 @@ function addUsage(a: LlmUsage, b: LlmUsage): LlmUsage {
 const WORD_BUDGET = 150;
 /** Drafts longer than this get one compression pass. */
 const HARD_WORD_CEILING = 170;
+/** Earlier briefings the compiler checks a new report against. */
+const MAX_PREVIOUS_BRIEFS = 3;
+/** Recent reports scanned to find this workflow's own earlier briefings. */
+const REPORT_HISTORY_SCAN = 30;
 
 
 function buildResearchPrompt(topics: Topic[], recency: string): string {

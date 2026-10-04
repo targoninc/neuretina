@@ -89,7 +89,7 @@
                 <span class="chevron"><Icon icon={iconExpandMore} size={18} /></span>
               </summary>
               <ul>
-                {#each group.sources as source (source.url)}
+                {#each group.sources as source (numbers.get(source))}
                   <li class="source">
                     <a class="source-head" href={source.url} target="_blank" rel="noreferrer">
                       <span class="ref">{numbers.get(source)}</span>
