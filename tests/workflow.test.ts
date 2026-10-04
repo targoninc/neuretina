@@ -617,6 +617,71 @@ describe("BriefingWorkflow", () => {
     expect(compilerInputs[1]).toContain("All quiet");
   });
 
+  test("records report-text revisions as diffs for the activity feed", async () => {
+    const { workflow, topics, bus, statuses } = setup({
+      followups: true,
+      sourceUpgrades: {
+        markdown:
+          "# Morning report\n\n## Rust\nRust 1.90 is out [1].\n\n## Implications\nRust adoption keeps accelerating [1].",
+        upgrades: [],
+      },
+    });
+    topics.add({ name: "Rust" });
+
+    await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-rev", bus, logger: log, statuses },
+    );
+
+    const entries = statuses.snapshot();
+    const revisionOf = (prefix: string) => {
+      const entry = entries.find((candidate) => candidate.text.startsWith(prefix));
+      expect(entry?.detail).toBeTruthy();
+      return JSON.parse(entry!.detail!) as { reportDiff: { before: string; after: string } };
+    };
+
+    // The compiled draft is the report's first version.
+    const compiled = revisionOf("Report compiled");
+    expect(compiled.reportDiff.before).toBe("");
+    expect(compiled.reportDiff.after).toContain("All quiet");
+
+    // Digging deeper appends the implications section to its step entry.
+    const followup = revisionOf("Implications ready");
+    expect(followup.reportDiff.before).toContain("All quiet");
+    expect(followup.reportDiff.after).toContain("## Implications");
+
+    // The primary-source pass rewrites the report on its own entry.
+    const sources = revisionOf("Primary sources:");
+    expect(sources.reportDiff.before).toContain("## Implications");
+    expect(sources.reportDiff.after).toContain("Rust 1.90 is out");
+  });
+
+  test("does not claim a source revision when the model echoes the report back", async () => {
+    const compiled =
+      "# Morning report\n\n## Rust\nAll quiet.\n\n## AI regulation\nHeated debate.";
+    const combined = `${compiled}\n\n## Implications\n\nRust adoption keeps accelerating [1].`;
+    const { workflow, topics, bus, statuses } = setup({
+      followups: true,
+      sourceUpgrades: {
+        markdown: combined,
+        upgrades: [{ for: 1, title: "Primary", url: "https://origin.example.com/a" }],
+      },
+    });
+    topics.add({ name: "Rust" });
+
+    await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-echo", bus, logger: log, statuses },
+    );
+
+    const entry = statuses
+      .snapshot()
+      .find((candidate) => candidate.text.startsWith("Primary sources:"));
+    expect(entry?.text).toContain("upgrade(s)");
+    expect(entry?.text).not.toContain("report revised");
+    expect(entry?.detail).toBeUndefined();
+  });
+
   test("appends the follow-up findings as an Implications section that is also spoken", async () => {
     const { workflow, topics, reports, bus, statuses, compilerInputs, dispatcherInputs } = setup({
       followups: true,

@@ -2,6 +2,15 @@ export type StatusState = "running" | "done" | "failed";
 /** Rendering hint: a coarse task/step, or one tool call with its I/O. */
 export type StatusKind = "task" | "tool";
 
+/**
+ * Detail payload for a report-text revision; the activity view renders it as a
+ * diff. Every step that revises the report records the change through this
+ * helper so revisions read the same way.
+ */
+export function reportDiffDetail(before: string, after: string): string {
+  return JSON.stringify({ reportDiff: { before, after } });
+}
+
 export interface StatusEntry {
   id: string;
   /** Groups entries that belong to the same running thing (parallel-safe). */

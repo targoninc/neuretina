@@ -8,10 +8,12 @@
   import {
     codeOf,
     formatStatusValue,
-    highlightCode,
     parseToolDetail,
+    reportRevision,
     restOfInput,
   } from "../lib/statusDetail";
+  import { highlightCode } from "../lib/statusHighlight";
+  import ReportDiff from "./ReportDiff.svelte";
 
   interface Props {
     detail?: string;
@@ -26,6 +28,7 @@
   const open = $derived(userOpen ?? status !== "done");
 
   const parsed = $derived(parseToolDetail(detail));
+  const revision = $derived(reportRevision(parsed));
 
   /** Objects and arrays get the collapsible tree; scalars stay plain text. */
   function isJsonContainer(value: unknown): value is Record<string, unknown> | unknown[] {
@@ -40,10 +43,14 @@
 {#if parsed}
   <div class="io">
     <button type="button" class="io-summary" aria-expanded={open} onclick={() => (userOpen = !open)}>
-      Input &amp; output
+      {revision ? "Report changes" : "Input & output"}
     </button>
     {#if open}
-      {#if parsed.input !== undefined}
+      {#if revision}
+        <div class="section">
+          <ReportDiff before={revision.before} after={revision.after} />
+        </div>
+      {:else if parsed.input !== undefined}
         {#if codeOf(parsed.input) !== null}
           <div class="section">
             <span class="label">code</span>

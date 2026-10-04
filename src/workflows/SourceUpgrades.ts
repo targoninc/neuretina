@@ -7,6 +7,7 @@ import type { SearchProvider, SearchRecency } from "../capabilities/search/Searc
 import { addAgentCost } from "../core/cost/agentCosts.ts";
 import { errorMessage } from "../core/errors.ts";
 import { extractJson } from "../core/json.ts";
+import { reportDiffDetail } from "../core/status/StatusHub.ts";
 import type { WorkflowContext } from "../core/workflow/Workflow.ts";
 import type { ReportSource } from "../domain/reports/ReportRepository.ts";
 import { collectSources } from "./agentResults.ts";
@@ -138,8 +139,12 @@ export class SourceUpgrades {
       const found = collectSources(result);
       const sources = applySourceUpgrades(input.sources, parsed.upgrades, found);
       const upgraded = countReplacements(input.sources, sources);
+      // Only a real text change is a revision; models often echo the report
+      // back verbatim, which must not read as a change in the activity feed.
       const revision =
-        parsed.markdown && isAcceptableRevision(input.markdown, parsed.markdown, sources.length)
+        parsed.markdown &&
+        parsed.markdown.trimEnd() !== input.markdown.trimEnd() &&
+        isAcceptableRevision(input.markdown, parsed.markdown, sources.length)
           ? parsed.markdown
           : undefined;
 
@@ -150,6 +155,7 @@ export class SourceUpgrades {
 
       status?.done(
         `Primary sources: ${upgraded} upgrade(s)${revision ? ", report revised" : ""}`,
+        revision ? reportDiffDetail(input.markdown, revision) : undefined,
       );
       return { markdown: revision ?? input.markdown, sources, upgraded };
     } catch (error) {

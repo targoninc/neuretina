@@ -1,32 +1,40 @@
-import hljs from "highlight.js/lib/core";
-import typescript from "highlight.js/lib/languages/typescript";
+/** A report-text revision a workflow step made, rendered as a diff. */
+export interface ReportRevision {
+  before: string;
+  after: string;
+}
 
-// Code mode is TypeScript-flavoured JavaScript, and its grammar covers both.
-hljs.registerLanguage("typescript", typescript);
-
-/** Parsed tool-call detail: `{ input, output | error }` from the status feed. */
+/** Parsed entry detail: tool I/O (`{ input, output | error }`) or a report diff. */
 export interface ToolDetail {
   input?: unknown;
   output?: unknown;
   error?: string;
+  reportDiff?: ReportRevision;
 }
 
-/** Tool entries store a JSON `{ input, output|error }` detail. */
+/** Tool entries store `{ input, output|error }`; report revisions `{ reportDiff }`. */
 export function parseToolDetail(detail: string | undefined): ToolDetail | null {
   if (!detail || !detail.trimStart().startsWith("{")) return null;
   try {
     const parsed = JSON.parse(detail) as Record<string, unknown>;
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      ("input" in parsed || "output" in parsed || "error" in parsed)
-    ) {
+    if (!parsed || typeof parsed !== "object") return null;
+    const hasReportDiff = typeof parsed.reportDiff === "object" && parsed.reportDiff !== null;
+    if ("input" in parsed || "output" in parsed || "error" in parsed || hasReportDiff) {
       return parsed as ToolDetail;
     }
     return null;
   } catch {
     return null;
   }
+}
+
+/** The report revision in a parsed detail, when the entry carries one. */
+export function reportRevision(detail: ToolDetail | null): ReportRevision | null {
+  const value = detail?.reportDiff;
+  if (!value || typeof value !== "object") return null;
+  const before = typeof value.before === "string" ? value.before : "";
+  const after = typeof value.after === "string" ? value.after : "";
+  return before === after ? null : { before, after };
 }
 
 /** The code-mode program inside a `run_code` input, when present. */
@@ -57,12 +65,4 @@ export function formatStatusValue(value: unknown): string {
 /** Compact USD formatting for feed rows. */
 export function formatStatusCost(value: number): string {
   return value >= 0.01 ? `$${value.toFixed(2)}` : `$${value.toFixed(4)}`;
-}
-
-/**
- * JavaScript highlighting for code-mode programs (highlight.js). The returned
- * HTML carries `hljs-*` classes, styled with the M3 theme in the activity view.
- */
-export function highlightCode(code: string): string {
-  return hljs.highlight(code, { language: "typescript", ignoreIllegals: true }).value;
 }

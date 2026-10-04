@@ -28,7 +28,7 @@ import { errorMessage } from "../core/errors.ts";
 import { extractJson } from "../core/json.ts";
 import { audioExtension } from "../core/media.ts";
 import { stringField } from "../core/records.ts";
-import type { StatusHub } from "../core/status/StatusHub.ts";
+import { reportDiffDetail, type StatusHub } from "../core/status/StatusHub.ts";
 import type { ArtifactStore } from "../domain/artifacts/ArtifactRepository.ts";
 import {
   orderReportArtifacts,
@@ -732,7 +732,9 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
       if (draft.usage) {
         compileSpan?.addCost(ctx.run.cost?.addLlm("Compilation", draft.usage) ?? 0);
       }
-      compileSpan?.done("Report compiled");
+      // The compiled draft is the report's first version; the activity feed
+      // shows it as a diff so every later step's changes read in context.
+      compileSpan?.done("Report compiled", reportDiffDetail("", draft.markdown));
       return { outputs: { draft: { text: draft.markdown, narration: draft.narration } } };
     } catch (error) {
       compileSpan?.failed("Compilation failed");
@@ -763,7 +765,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     return {
       outputs: {
         implications: {
-          ...applyImplications(draft, deeper),
+          ...deeper.combined,
           metadata: { sources: deeper.sources },
         },
       },
@@ -1141,7 +1143,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     sources: ReportSource[],
     contextId: string,
     context: WorkflowContext,
-  ): Promise<{ section: string; sources: ReportSource[] } | undefined> {
+  ): Promise<{ combined: TextPortValue; sources: ReportSource[] } | undefined> {
     const { correlationId, logger } = context;
     const span = context.statuses?.begin(`${correlationId}:followups`, "Digging deeper", {
       correlationId,
@@ -1182,10 +1184,12 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         return undefined;
       }
 
+      const combined = applyImplications({ text: draft }, { section });
       span?.done(
         `Implications ready (${tasks.length} follow-up(s), ${mergedSources.length} source(s))`,
+        reportDiffDetail(draft, combined.text),
       );
-      return { section, sources: mergedSources };
+      return { combined, sources: mergedSources };
     } catch (error) {
       span?.failed(`Digging deeper failed (${errorMessage(error)})`);
       logger.warn("follow-up research failed; keeping the draft", {
