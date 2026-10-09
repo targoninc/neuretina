@@ -161,7 +161,6 @@ const TOPICS_INPUT: WorkflowInputSpec = {
   id: "topics",
   kind: "topics",
   title: "Topics",
-  description: "The topics the briefing covers.",
   required: true,
   multiple: true,
 };
@@ -171,8 +170,6 @@ const LANGUAGE_INPUT: WorkflowInputSpec = {
   id: "language",
   kind: "language",
   title: "Language",
-  description:
-    "Everything the run writes — research, report, narration and follow-ups — is in this language. Empty uses the configured default.",
   required: false,
   multiple: false,
 };

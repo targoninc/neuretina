@@ -23,7 +23,6 @@ export interface WorkflowInputSpec {
   /** Port type id (see ports.ts); drives validation and the editor control. */
   kind: string;
   title: string;
-  description?: string;
   /** Required inputs must hold a value for the workflow to be runnable. */
   required: boolean;
   /** The value is a list (of ids for now) rather than a single entry. */

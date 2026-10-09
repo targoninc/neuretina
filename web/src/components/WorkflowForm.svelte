@@ -49,9 +49,6 @@
       {:else}
         <p class="muted">This input kind is not editable in the interface yet.</p>
       {/if}
-      {#if spec.description}
-        <p class="muted spec-note">{spec.description}</p>
-      {/if}
     </div>
   {/each}
 </div>
