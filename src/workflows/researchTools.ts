@@ -29,7 +29,12 @@ export interface ResearchToolDeps {
  */
 export function createResearchTools(
   deps: ResearchToolDeps,
-  options: { contextId?: string; wikipedia?: boolean; extra?: Tool[] } = {},
+  options: {
+    contextId?: string;
+    wikipedia?: boolean;
+    extra?: Tool[];
+    language?: string;
+  } = {},
 ): Tool[] {
   const providers =
     deps.searchProviders && deps.searchProviders.length > 0
@@ -54,7 +59,7 @@ export function createResearchTools(
     ...createWebSearchTools(providers, {
       limit: defaults.resultsPerProvider,
       recency: defaults.recency,
-      language: defaults.language,
+      language: options.language ?? defaults.language,
       domains: defaults.searchDomains,
     }),
     createSocialSearchTool(deps.socialSearch, {

@@ -5,9 +5,7 @@
 
   interface Props {
     name: string;
-    /** Configured values keyed by input id, e.g. `{ topics: ["…"] }`. */
-    inputs: Record<string, string[]>;
-    /** The workflow's input specs, rendered by kind. */
+    inputs: Record<string, unknown>;
     specs: WorkflowInputInfo[];
     topics: Topic[];
     disabled?: boolean;
@@ -27,8 +25,8 @@
     onenter,
   }: Props = $props();
 
-  function setValues(spec: WorkflowInputInfo, values: string[]): void {
-    inputs = { ...inputs, [spec.id]: values };
+  function setValue(spec: WorkflowInputInfo, value: unknown): void {
+    inputs = { ...inputs, [spec.id]: value };
   }
 </script>
 
@@ -43,10 +41,10 @@
         <Editor
           {spec}
           {topics}
-          values={inputs[spec.id] ?? []}
+          value={inputs[spec.id]}
           {disabled}
           {capped}
-          onchange={(values) => setValues(spec, values)}
+          onchange={(value) => setValue(spec, value)}
         />
       {:else}
         <p class="muted">This input kind is not editable in the interface yet.</p>

@@ -26,6 +26,7 @@ import { addAgentCost } from "../core/cost/agentCosts.ts";
 import { isoDate } from "../core/dates.ts";
 import { errorMessage } from "../core/errors.ts";
 import { extractJson } from "../core/json.ts";
+import { languageName } from "../core/languages.ts";
 import { audioExtension } from "../core/media.ts";
 import { stringField } from "../core/records.ts";
 import { reportDiffDetail, type StatusHub } from "../core/status/StatusHub.ts";
@@ -165,6 +166,17 @@ const TOPICS_INPUT: WorkflowInputSpec = {
   multiple: true,
 };
 
+/** The language everything the run writes is in. */
+const LANGUAGE_INPUT: WorkflowInputSpec = {
+  id: "language",
+  kind: "language",
+  title: "Language",
+  description:
+    "Everything the run writes — research, report, narration and follow-ups — is in this language. Empty uses the configured default.",
+  required: false,
+  multiple: false,
+};
+
 const RESEARCH_SYSTEM_PROMPT = `You are a meticulous research assistant. You get a list of topics the user cares about — the topics may overlap.
 
 You research by writing JavaScript through the run_code tool: one small async function per run that calls the search and finance functions listed in the tool description, then returns compact findings. Run independent calls in parallel with Promise.all — calls never throw: a failed one comes back with an "error" field and empty results, so continue with what succeeded and never let one flaky provider abort the program. Filter and merge inside the code, and return only what matters — never raw tool output.
@@ -192,6 +204,9 @@ Finish with a single JSON object and nothing else:
 Set "found" to false when nothing relevant to any topic came back.`;
 
 const COMPILER_SYSTEM_PROMPT = `You are the editor of a neutral briefing. You receive research notes covering several topics (they may overlap) and compile ONE short, conversational report.
+
+Language:
+- Write the entire report in the language given in the input's "language" field, translating any notes written in another language.
 
 Spoken delivery — this text is read aloud by a text-to-speech model, sentence by sentence. Write for the ear:
 - Complete, speakable sentences with a natural rhythm. Avoid fragments, stacked parentheticals, slashes, and symbol-heavy shorthand.
@@ -259,7 +274,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         "Researches all configured topics (web + social), compiles a neutral report, generates audio and delivers it.",
       contextId: DEFAULT_CONTEXT_ID,
       triggers: [{ kind: "schedule" as const }, { kind: "manual" as const }],
-      inputs: [TOPICS_INPUT],
+      inputs: [TOPICS_INPUT, LANGUAGE_INPUT],
       steps: [
         {
           id: "research",
@@ -504,6 +519,12 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     });
   }
 
+  /** The language a run works in: its configured input, else the default. */
+  private languageOf(ctx: StepContext): string {
+    const value = ctx.inputs.language;
+    return typeof value === "string" && value ? value : this.deps.defaults.language;
+  }
+
   /** Renders the report artifact as a text message for its assigned channels. */
   private renderReport(value: unknown): DeliveryMessage | undefined {
     const reference = textReference(value);
@@ -591,7 +612,8 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
 
     // One research run covers all topics: the agent plans its own searches,
     // merges overlapping topics and can consult earlier reports.
-    const researchAgent = this.createResearchAgent(contextId);
+    const language = this.languageOf(ctx);
+    const researchAgent = this.createResearchAgent(contextId, language);
     const researchSpan = this.deps.statuses?.begin(
       `${correlationId}:research`,
       `Researching ${topicNames.length} topic(s)`,
@@ -601,7 +623,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     let result: AgentRunResult;
     try {
       result = await researchAgent.run(
-        buildResearchPrompt(topics, this.deps.defaults.recency),
+        buildResearchPrompt(topics, this.deps.defaults.recency, language),
         {
           correlationId,
           bus,
@@ -728,6 +750,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         { topics: topicNames, notes: research.text, sources: sourcesOf(research) },
         ctx.run,
         previous,
+        this.languageOf(ctx),
       );
       if (draft.usage) {
         compileSpan?.addCost(ctx.run.cost?.addLlm("Compilation", draft.usage) ?? 0);
@@ -759,6 +782,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
       research ? sourcesOf(research) : [],
       contextId,
       ctx.run,
+      this.languageOf(ctx),
     );
     if (!deeper) return { outputs: {} };
 
@@ -786,6 +810,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
       draft.text,
       sources,
       ctx.run,
+      this.languageOf(ctx),
     );
     if (!upgraded) return { outputs: { draft, sources } };
 
@@ -1103,7 +1128,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     };
   }
 
-  private createResearchAgent(contextId: string): Agent {
+  private createResearchAgent(contextId: string, language: string): Agent {
     // Code mode: the researcher writes one program that calls the real tools
     // inside a sandbox, so searches run in parallel and intermediate results
     // never round-trip through the model.
@@ -1113,6 +1138,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         : [this.deps.finance];
     const tools = createResearchTools(this.deps, {
       contextId,
+      language,
       extra: [
         new ReportGetTool(this.deps.reports),
         ...finance.map((provider) => new FinanceSearchTool(provider)),
@@ -1143,6 +1169,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     sources: ReportSource[],
     contextId: string,
     context: WorkflowContext,
+    language: string,
   ): Promise<{ combined: TextPortValue; sources: ReportSource[] } | undefined> {
     const { correlationId, logger } = context;
     const span = context.statuses?.begin(`${correlationId}:followups`, "Digging deeper", {
@@ -1160,7 +1187,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         defaults: {
           recency: this.deps.defaults.recency,
           resultsPerProvider: this.deps.defaults.resultsPerProvider,
-          language: this.deps.defaults.language,
+          language,
           searchDomains: this.deps.defaults.searchDomains,
         },
       });
@@ -1204,6 +1231,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     markdown: string,
     sources: ReportSource[],
     context: WorkflowContext,
+    language: string,
   ): Promise<{ markdown: string; sources: ReportSource[] } | undefined> {
     try {
       const upgrades = new SourceUpgrades({
@@ -1213,7 +1241,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         defaults: {
           recency: this.deps.defaults.recency,
           resultsPerProvider: this.deps.defaults.resultsPerProvider,
-          language: this.deps.defaults.language,
+          language,
         },
       });
 
@@ -1237,8 +1265,9 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     research: { topics: string[]; notes: string; sources: ReportSource[] },
     context: WorkflowContext,
     previous: PreviousBrief[],
+    language: string,
   ): Promise<{ markdown: string; narration: string; usage: LlmUsage }> {
-    const draft = await this.requestCompilation(research, context, previous);
+    const draft = await this.requestCompilation(research, context, previous, language);
     const draftWords = wordCount(draft.markdown);
 
     if (draftWords <= HARD_WORD_CEILING) return draft;
@@ -1247,7 +1276,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     // for over-long drafts before anything is spoken or delivered.
     context.logger.warn("report over word budget; compressing", { words: draftWords });
     try {
-      const compressed = await this.requestCompilation(research, context, previous, {
+      const compressed = await this.requestCompilation(research, context, previous, language, {
         draft: draft.markdown,
         words: draftWords,
       });
@@ -1266,16 +1295,17 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     research: { topics: string[]; notes: string; sources: ReportSource[] },
     context: WorkflowContext,
     previous: PreviousBrief[],
+    language: string,
     compress?: { draft: string; words: number },
   ): Promise<{ markdown: string; narration: string; usage: LlmUsage }> {
     const userContent = compress
       ? JSON.stringify({
-          language: this.deps.defaults.language,
+          language: languageName(language),
           instruction: `This draft is ${compress.words} words; the budget is ${WORD_BUDGET}. Rewrite it shorter, keeping every fact, every inline source link, the split-opinion reporting and the one-paragraph-per-subtopic shape, with no lists or extra sections. Note that it might be read out by a text-to-speech model, so keep it speakable and natural. Do not invent any material.`,
           draft: compress.draft,
         })
       : JSON.stringify({
-          language: this.deps.defaults.language,
+          language: languageName(language),
           date: isoDate(),
           topics: research.topics,
           sources: research.sources.map((source, index) => ({
@@ -1494,7 +1524,7 @@ const MAX_PREVIOUS_BRIEFS = 3;
 const REPORT_HISTORY_SCAN = 30;
 
 
-function buildResearchPrompt(topics: Topic[], recency: string): string {
+function buildResearchPrompt(topics: Topic[], recency: string, language: string): string {
   const list = topics
     .map((topic) => (topic.description ? `- ${topic.name} (context: ${topic.description})` : `- ${topic.name}`))
     .join("\n");
@@ -1504,6 +1534,7 @@ function buildResearchPrompt(topics: Topic[], recency: string): string {
     list,
     "",
     `Focus on material from the last ${recencyLabel(recency)}.`,
+    `Write your notes in ${languageName(language)}.`,
   ].join("\n");
 }
 

@@ -1104,5 +1104,46 @@ describe("BriefingWorkflow", () => {
     expect(tts.requests).toHaveLength(1);
     expect(events.list()).toHaveLength(1);
   });
+
+  test("writes research, report and follow-ups in the configured language", async () => {
+    const { workflow, topics, bus, statuses, compilerInputs, llmRequests } = setup({
+      followups: true,
+    });
+    topics.add({ name: "Rust" });
+
+    const output = await workflow.run(
+      { inputs: { language: "de" }, deliver: false, generateAudio: false },
+      { correlationId: "c-lang", bus, logger: log, statuses },
+    );
+
+    expect(output.skipped).toBe(false);
+
+    // The researcher is told which language to write its notes in...
+    const research = llmRequests.find((request) =>
+      (request.messages[0]?.content ?? "").includes("calls the search and finance functions"),
+    );
+    expect(research?.messages[1]?.content).toContain("Write your notes in German.");
+
+    // ...the compiler writes the report in it...
+    expect(compilerInputs[0]).toContain('"language":"German"');
+
+    // ...and the follow-up prompts follow the same language.
+    const followup = llmRequests.find((request) =>
+      (request.messages[0]?.content ?? "").includes("one specific follow-up question"),
+    );
+    expect(followup?.messages[1]?.content).toContain("Write your findings in German.");
+  });
+
+  test("falls back to the configured default language when no input is set", async () => {
+    const { workflow, topics, bus, statuses, compilerInputs } = setup();
+    topics.add({ name: "Rust" });
+
+    await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-lang-default", bus, logger: log, statuses },
+    );
+
+    expect(compilerInputs[0]).toContain('"language":"English"');
+  });
 });
 

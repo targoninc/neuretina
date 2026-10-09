@@ -34,11 +34,17 @@ export function splitAssignmentKey(key: string): [string, string] {
 }
 
 /** Order-insensitive snapshot of the input editor's values. */
-export function serializeInputs(inputs: Record<string, string[]>): string {
+export function serializeInputs(inputs: Record<string, unknown>): string {
   const entries = Object.entries(inputs)
-    .map(([key, values]) => [key, [...values].sort()] as const)
+    .map(([key, value]) => [key, Array.isArray(value) ? [...value].sort() : value] as const)
     .sort(([a], [b]) => a.localeCompare(b));
   return JSON.stringify(Object.fromEntries(entries));
+}
+
+export function inputFilled(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.trim() !== "";
+  return value !== undefined && value !== null;
 }
 
 /** Order-insensitive snapshot of the channel assignments (empty keys dropped). */

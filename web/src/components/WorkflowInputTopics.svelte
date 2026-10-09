@@ -2,8 +2,12 @@
   import { Switch } from "m3-svelte";
   import type { WorkflowInputEditorProps } from "../lib/workflowInputs";
 
-  let { topics, values, disabled = false, capped = true, onchange }: WorkflowInputEditorProps =
+  let { topics, value, disabled = false, capped = true, onchange }: WorkflowInputEditorProps =
     $props();
+
+  const values = $derived(
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [],
+  );
 
   function toggle(id: string): void {
     onchange(values.includes(id) ? values.filter((entry) => entry !== id) : [...values, id]);

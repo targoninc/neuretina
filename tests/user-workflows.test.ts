@@ -426,6 +426,21 @@ describe("user workflows through the gateway", () => {
     expect(unknownTopic.status).toBe(400);
     expect(unknownTopic.body.error).toContain("not found");
 
+    // A language is accepted by name or code and normalized to its code.
+    const withLanguage = await call<UserWorkflowInfo>("workflow.user.create", {
+      name: "German desk",
+      inputs: { topics: [topic.id], language: "German" },
+    });
+    expect(withLanguage.inputs).toEqual({ topics: [topic.id], language: "de" });
+    await call("workflow.user.remove", { id: withLanguage.id });
+
+    const badLanguage = await post({
+      type: "workflow.user.create",
+      payload: { name: "Klingon desk", inputs: { topics: [topic.id], language: "klingon" } },
+    });
+    expect(badLanguage.status).toBe(400);
+    expect(badLanguage.body.error).toContain("Unsupported language");
+
     const unknownStop = await post({
       type: "workflow.user.create",
       payload: {

@@ -5,6 +5,7 @@
   import { reportError, reportSuccess } from "../lib/feedback";
   import {
     assignmentKey,
+    inputFilled,
     serializeAssignments,
     serializeInputs,
     splitAssignmentKey,
@@ -33,7 +34,7 @@
   // the saved values the dirty check compares against.
   let editorId = $state<string | null>(null);
   let editorName = $state("");
-  let editorInputs = $state<Record<string, string[]>>({});
+  let editorInputs = $state<Record<string, unknown>>({});
   let editorAssignments = $state<Record<string, string[]>>({});
   let editorStopAfter = $state<string | null>(null);
   let editorBaseName = $state("");
@@ -56,7 +57,7 @@
   );
   /** Every required input holds a value (e.g. at least one topic). */
   const inputsValid = $derived(
-    (workflow?.inputs ?? []).every((spec) => !spec.required || (editorInputs[spec.id]?.length ?? 0) > 0),
+    (workflow?.inputs ?? []).every((spec) => !spec.required || inputFilled(editorInputs[spec.id])),
   );
   const canSave = $derived(
     ready && dirty && !saving && editorName.trim() !== "" && inputsValid,
@@ -92,15 +93,17 @@
       topics = loadedTopics;
       channels = loadedChannels;
 
-      const inputs: Record<string, string[]> = {};
+      const inputs: Record<string, unknown> = {};
       for (const spec of target.inputs) {
         const stored = target.inputValues?.[spec.id];
-        if (Array.isArray(stored)) {
-          inputs[spec.id] = stored.filter((value): value is string => typeof value === "string");
-        } else {
+        if (stored !== undefined) {
+          inputs[spec.id] = stored;
+        } else if (spec.kind === "topics" && id === "briefing") {
           // The un-customized briefing covers all topics until pinned.
-          inputs[spec.id] =
-            spec.kind === "topics" && id === "briefing" ? loadedTopics.map((topic) => topic.id) : [];
+          inputs[spec.id] = loadedTopics.map((topic) => topic.id);
+        } else {
+          // An empty list / unset scalar means "use the configured default".
+          inputs[spec.id] = spec.multiple ? [] : "";
         }
       }
 

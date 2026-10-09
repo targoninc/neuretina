@@ -13,6 +13,14 @@ const TOPICS_SPEC: WorkflowInputSpec = {
   multiple: true,
 };
 
+const LANGUAGE_SPEC: WorkflowInputSpec = {
+  id: "language",
+  kind: "language",
+  title: "Language",
+  required: false,
+  multiple: false,
+};
+
 function topicStore(): TopicRepository {
   return new TopicRepository(new SqliteDatabase(":memory:"));
 }
@@ -63,6 +71,46 @@ describe("workflow input registry", () => {
       contextId,
     });
     expect((pinned.topics as Array<{ id: string }>).map((topic) => topic.id)).toEqual([alpha.id]);
+  });
+
+  test("parses a language by code or name and rejects unknown ones", () => {
+    const topics = topicStore();
+    const inputs = createWorkflowInputs();
+
+    expect(
+      inputs.parseInputs([LANGUAGE_SPEC], { language: "DE" }, { topics }, { requireFilled: true }),
+    ).toEqual({ language: "de" });
+    expect(
+      inputs.parseInputs([LANGUAGE_SPEC], { language: "German" }, { topics }, {
+        requireFilled: true,
+      }),
+    ).toEqual({ language: "de" });
+
+    // Empty means "use the configured default".
+    const empty = inputs.parseInputs([LANGUAGE_SPEC], { language: "" }, { topics }, {
+      requireFilled: true,
+    });
+    expect(empty.language).toBeUndefined();
+
+    expect(() =>
+      inputs.parseInputs([LANGUAGE_SPEC], { language: "klingon" }, { topics }, {
+        requireFilled: true,
+      }),
+    ).toThrow(/Unsupported language/);
+  });
+
+  test("resolves the language into the run context", () => {
+    const topics = topicStore();
+    const inputs = createWorkflowInputs();
+
+    expect(
+      inputs.resolveContext([LANGUAGE_SPEC], { language: "German" }, { topics }, {
+        contextId: "default",
+      }),
+    ).toEqual({ language: "de" });
+    expect(
+      inputs.resolveContext([LANGUAGE_SPEC], {}, { topics }, { contextId: "default" }),
+    ).toEqual({ language: undefined });
   });
 
   test("a newly registered context kind flows through parse and resolve", () => {

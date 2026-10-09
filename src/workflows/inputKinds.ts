@@ -1,4 +1,5 @@
 import { WorkflowInputRegistry } from "../core/workflow/inputs.ts";
+import { createLanguageInputKind } from "./inputKinds/languageInput.ts";
 import { createTopicsInputKind } from "./inputKinds/topicsInput.ts";
 
 /**
@@ -10,5 +11,6 @@ import { createTopicsInputKind } from "./inputKinds/topicsInput.ts";
 export function createWorkflowInputs(): WorkflowInputRegistry {
   const inputs = new WorkflowInputRegistry();
   inputs.register(createTopicsInputKind());
+  inputs.register(createLanguageInputKind());
   return inputs;
 }
