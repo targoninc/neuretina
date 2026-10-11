@@ -208,8 +208,8 @@ paste it.
 
 The engine uses a **decision model** where a step needs one calibrated choice instead of generated
 text — today the event tag step of the briefing pipeline (pick an existing tag, or ask for a new
-one). Besides the built-in local Laya model, hosted connections are configured in
-**Settings → Decision models**:
+one). Besides the optional local Laya model (source runs only), hosted connections are configured
+in **Settings → Decision models**:
 
 - **Add connection** offers the two providers that share the Jev/SystemOne API:
   - **TypeSafe (Jev)** — endpoint `https://api.typesafe.ai/v1/systemone`, model `jev-latest`,
@@ -226,7 +226,8 @@ one). Besides the built-in local Laya model, hosted connections are configured i
   reports the provider's answer or its error inline.
 - Connections (including API keys) are stored as user settings, so **export/import configuration**
   carries them to another installation. Laya itself stays configured through the `LAYA_*`
-  environment variables.
+  environment variables and only runs from source: the Docker image ships neither the model nor
+  the ONNX runtime, so pull it with `bun run laya:pull` and run locally to use it.
 
 ### Web search (Perplexity, Exa)
 
