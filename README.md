@@ -18,7 +18,7 @@ scheduler (Bun.cron, jobs in SQLite)          Matrix message (reply chain resolv
                          ├─ search.bluesky  → AT Protocol searchPosts
                          └─ past_reports     → SQLite report history
           compiler LLM → neutral markdown report + spoken narration
-          follow-up subagents → implications/context → recompile
+          follow-up subagents → context woven into each topic section
           Qwen3-TTS    → speech audio (local server)
           Matrix       → voice message (MSC3245)
                                                                        ▼
@@ -494,17 +494,26 @@ the Workflows tab.
   single report, and the researcher can pull concrete market numbers (quotes, revenue, margins,
   guidance, estimates) through the finance tools (Perplexity's Agent API, or keyless Yahoo Finance
   quotes) when a topic involves a public company or the markets.
+- **Report shape:** one text, grouped into topic sections. When the research finds several clearly
+  separable topics, each gets a short `##` subheading and its own paragraph; a single-topic report
+  stays as a plain paragraph under the title. There is no separate "Implications" or "Context"
+  section — that material belongs inside the topic it affects.
+- **Resilient research:** every configured web provider gets a keyless news fallback (public Bing
+  and Google News RSS feeds), and every research agent has a `web.fetch` tool to open a search
+  result, verify a primary source or read a news site directly. A Perplexity outage, expired key
+  or missing search connection therefore never leaves the run without web material.
 - **Briefing style:** workflows take an optional **Style** description, with presets (Analyst,
   Executive, Casual, Deep dive, Skeptical, Plain English) that fill the editable text. The
-  description is passed as house-style guidance to the compiler and to the implications and
+  description is passed as house-style guidance to the compiler and to the follow-up and
   primary-source passes, so the report's voice stays consistent. The hard rules still win:
-  neutral reporting, inline citations, the brevity budget and one paragraph per subtopic — style
+  neutral reporting, inline citations, the brevity budget and one section per subtopic — style
   changes how the report sounds, never what it may claim. An empty style keeps the default voice.
 - **Delivery is two messages by default:** the compiled summary as a formatted text message
   (markdown rendered to Matrix `formatted_body`) followed by the voice message. The summary is
-  written for spoken delivery under a hard brevity budget (under ~150 words) — the compiler is
-  TTS-aware (speakable sentences, symbols written out, everyday expressions kept neutral) and the
-  narration is derived from the summary itself, so the audio reads the same text minus the links.
+  written for spoken delivery under a hard brevity budget (the compiler targets under ~150 words;
+  follow-up context can extend it a little) — the compiler is TTS-aware (speakable sentences,
+  symbols written out, everyday expressions kept neutral) and the narration is derived from the
+  summary itself, so the audio reads the same text minus the links.
 - **Anonymous report links:** delivered summaries append a "View this Report" link carrying a
   per-report token (`APP_URL/reports/<id>?token=…`). Recipients without an account open that report
   in a read-only view with no navigation; the token unlocks that one report only.
@@ -532,19 +541,21 @@ the Workflows tab.
   a deeper look — implications, causes, missing context — and dispatches up to three subagents (one
   question each). Every subagent can use Wikipedia, the reputable web search, social search and past
   reports and returns compact findings with attributions; their sources are merged into the report's
-  source list and a short **"Implications" section is appended** to the report — which is also read
-  aloud with the rest. If nothing qualifies, or the follow-ups find nothing, the draft is kept
-  unchanged, and a failed follow-up never throws away a good report.
-- **Primary-source upgrades:** after the implications are settled, one more research agent hunts for
-  **primary sources** behind the report's claims — the official announcement, company blog or IR page,
-  filing, documentation or government publication instead of the news coverage about it. When it
-  finds one it replaces the matching entry in the source list (citation numbers stay stable) and may
-  adjust the claim's wording to match the primary source more precisely. Source counts and the word
-  budget are capped, and a failed or fruitless pass always keeps the draft as it is.
+  source list and the findings are **woven into the matching topic sections**, so every topic reads
+  as one complete picture instead of ending with a separate section. If nothing qualifies, or the
+  follow-ups find nothing, the draft is kept unchanged, and a failed follow-up never throws away a
+  good report.
+- **Primary-source upgrades:** after the follow-up findings are settled, one more research agent
+  hunts for **primary sources** behind the report's claims — the official announcement, company
+  blog or IR page, filing, documentation or government publication instead of the news coverage
+  about it. When it finds one it replaces the matching entry in the source list (citation numbers
+  stay stable) and may adjust the claim's wording to match the primary source more precisely.
+  Source counts and the word budget are capped, and a failed or fruitless pass always keeps the
+  draft as it is.
 - **Cost tracking:** every workflow step reports what it spent. Costs are never configured: a line
   is priced only when the provider reports an exact cost with the response (Perplexity search and
   finance do; Exa and Yahoo Finance do not), otherwise the usage is recorded as unpriced. Free
-  social search is not tracked. The per-step breakdown is stored on the run, and the run activity
+  social and news search is not tracked. The per-step breakdown is stored on the run, and the run activity
   feed shows each task's cost sum (unpriced usage counts as $0.00).
 - Disable both post-draft passes with `DEFAULT_FOLLOWUP_RESEARCH=false`.
 - **Scheduled tasks** live in SQLite and use `Bun.cron` (standard 5-field expressions, in the

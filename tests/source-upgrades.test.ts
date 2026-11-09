@@ -3,9 +3,9 @@ import type { ReportSource } from "../src/domain/reports/ReportRepository.ts";
 import {
   MAX_SOURCE_UPGRADES,
   applySourceUpgrades,
-  isAcceptableRevision,
   parseSourceUpgrades,
 } from "../src/workflows/SourceUpgrades.ts";
+import { isAcceptableRevision } from "../src/domain/reports/reportRevision.ts";
 
 describe("parseSourceUpgrades", () => {
   test("parses markdown and upgrades", () => {
@@ -130,11 +130,16 @@ describe("applySourceUpgrades", () => {
 
 describe("isAcceptableRevision", () => {
   const original =
-    "# Morning report\n\n## Rust\nAll quiet [1].\n\n## Implications\nAdoption keeps accelerating [1].";
+    "# Morning report\n\n## Rust\nAll quiet [1]. Adoption keeps accelerating [1].";
 
   test("accepts a faithful revision", () => {
     const revised =
-      "# Morning report\n\n## Rust\nRust 1.90 shipped [1].\n\n## Implications\nAdoption keeps accelerating [1].";
+      "# Morning report\n\n## Rust\nRust 1.90 shipped [1]. Adoption keeps accelerating [1].";
+    expect(isAcceptableRevision(original, revised, 2)).toBe(true);
+  });
+
+  test("accepts a report without a separate section", () => {
+    const revised = "# Morning report\n\n## Rust\nAll quiet [1].";
     expect(isAcceptableRevision(original, revised, 2)).toBe(true);
   });
 
@@ -145,12 +150,15 @@ describe("isAcceptableRevision", () => {
     expect(isAcceptableRevision(original, `# Rewritten\n\n${filler}`, 2)).toBe(false);
   });
 
-  test("rejects dropped implications and unknown citation numbers", () => {
-    const noImplications = "# Morning report\n\n## Rust\nAll quiet [1].";
-    expect(isAcceptableRevision(original, noImplications, 2)).toBe(false);
+  test("honors an absolute word ceiling", () => {
+    const revised =
+      "# Morning report\n\n## Rust\nRust 1.90 shipped with faster builds and new features [1].";
+    expect(isAcceptableRevision(original, revised, 2, { maxWords: 8 })).toBe(false);
+  });
 
+  test("rejects unknown citation numbers", () => {
     const badMarker =
-      "# Morning report\n\n## Rust\nAll quiet [9].\n\n## Implications\nAdoption keeps accelerating [1].";
+      "# Morning report\n\n## Rust\nAll quiet [9]. Adoption keeps accelerating [1].";
     expect(isAcceptableRevision(original, badMarker, 2)).toBe(false);
   });
 });

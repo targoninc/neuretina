@@ -6,8 +6,8 @@ import type { CostTracker, FinanceUsageSummary, SearchUsage } from "./CostTracke
 const SEARCH_TOOL_PREFIX = "search.";
 const FINANCE_TOOL_PREFIX = "finance.";
 
-/** Social search is free, so it never becomes a cost line. */
-const SOCIAL_SEARCH_PROVIDER = "bluesky";
+/** Social search and public news feeds are free, so they never become cost lines. */
+const FREE_SEARCH_PROVIDERS = new Set(["bluesky", "news"]);
 
 export interface ProviderSearchUsage extends SearchUsage {
   provider: string;
@@ -43,7 +43,7 @@ export function addAgentCost(
  * as unpriced; social search is free and skipped.
  */
 export function collectSearchUsage(result: AgentRunResult): ProviderSearchUsage[] {
-  return collectProviderUsage(result, SEARCH_TOOL_PREFIX, SOCIAL_SEARCH_PROVIDER).map(
+  return collectProviderUsage(result, SEARCH_TOOL_PREFIX, FREE_SEARCH_PROVIDERS).map(
     ({ provider, calls, priced, costUsd }) => ({
       provider,
       requests: calls,
@@ -97,7 +97,7 @@ interface ToolInvocationResponse {
 function collectProviderUsage(
   result: AgentRunResult,
   prefix: string,
-  skipProvider?: string,
+  freeProviders: ReadonlySet<string> = new Set(),
 ): ProviderUsage[] {
   const byProvider = new Map<string, ProviderUsage>();
   const entry = (provider: string): ProviderUsage => {
@@ -111,7 +111,7 @@ function collectProviderUsage(
   const resolve = (tool: unknown): string | undefined => {
     if (typeof tool !== "string" || !tool.startsWith(prefix)) return undefined;
     const provider = tool.slice(prefix.length);
-    return provider && provider !== skipProvider ? provider : undefined;
+    return provider && !freeProviders.has(provider) ? provider : undefined;
   };
 
   for (const step of result.steps) {

@@ -8,6 +8,10 @@ export interface SearchToolDefaults {
   language?: string;
   /** Reputable-source allowlist; empty disables the filter. */
   domains?: string[];
+  /** Custom tool description; defaults to the provider kind's description. */
+  description?: string;
+  /** Provider used when a web search fails, e.g. a keyless news search. */
+  fallback?: SearchProvider;
 }
 
 /** One `search.<provider>` tool per configured web provider. */
@@ -24,8 +28,27 @@ export function createWebSearchTools(
         defaultRecency: defaults.recency,
         defaultLanguage: defaults.language,
         domains: defaults.domains,
+        ...(defaults.description ? { description: defaults.description } : {}),
+        ...(defaults.fallback ? { fallback: defaults.fallback } : {}),
       }),
   );
+}
+
+/** Keyless news search under `search.news`, also used as the web fallback. */
+export function createNewsSearchTool(
+  provider: SearchProvider,
+  defaults: Pick<SearchToolDefaults, "limit" | "recency" | "language" | "domains">,
+): SearchTool {
+  return new SearchTool({
+    provider,
+    toolName: "search.news",
+    description:
+      "Search recent news coverage across major outlets. Keyless fallback for when a web-search provider is unavailable.",
+    defaultLimit: defaults.limit,
+    defaultRecency: defaults.recency,
+    defaultLanguage: defaults.language,
+    domains: defaults.domains,
+  });
 }
 
 /** The social provider under `search.bluesky`. */

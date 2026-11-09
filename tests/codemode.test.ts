@@ -177,6 +177,27 @@ describe("CodeModeTool", () => {
     ).rejects.toThrow("fetch");
   });
 
+  test("allows the sanctioned web.fetch tool", async () => {
+    const fetchTool = stubTool({
+      name: "web.fetch",
+      execute: async () => ({ text: "page", results: [] }),
+    });
+    const tool = new CodeModeTool({ tools: [fetchTool] });
+
+    const result = await tool.execute(
+      {
+        code: `async () => {
+          const page = await web.fetch({ url: "https://example.com" });
+          return { text: page.text };
+        }`,
+      },
+      toolContext(),
+    );
+
+    expect(result.result).toEqual({ text: "page" });
+    expect(result.toolCalls).toBe(1);
+  });
+
   test("enforces the tool-call budget inside the sandbox", async () => {
     const tool = new CodeModeTool({ tools: [stubTool()], maxToolCalls: 2 });
 

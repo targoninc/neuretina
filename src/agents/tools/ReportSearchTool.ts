@@ -1,5 +1,6 @@
 import { isoDate } from "../../core/dates.ts";
 import type { ReportStore } from "../../domain/reports/ReportRepository.ts";
+import { stripGenericSections } from "../../domain/reports/reportRevision.ts";
 import type { Tool } from "../Tool.ts";
 
 export interface PastReportsResult {
@@ -62,7 +63,7 @@ export class ReportSearchTool implements Tool<PastReportsResult> {
         id: report.id,
         date: isoDate(report.createdAt),
         topics: report.topics,
-        excerpt: report.markdown.slice(0, 800),
+        excerpt: stripGenericSections(report.markdown).slice(0, 800),
       })),
     };
   }

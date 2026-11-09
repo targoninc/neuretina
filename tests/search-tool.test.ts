@@ -63,3 +63,62 @@ describe("SearchTool domain allowlist", () => {
     expect(queries[0]?.language).toBe("en");
   });
 });
+
+describe("SearchTool fallback", () => {
+  test("uses the fallback provider when the primary fails", async () => {
+    const fallbackQueries: SearchQuery[] = [];
+    const primary: SearchProvider = {
+      name: "perplexity",
+      kind: "web",
+      search: async () => {
+        throw new Error("provider down");
+      },
+    };
+    const fallback: SearchProvider = {
+      name: "news",
+      kind: "news",
+      search: async (query) => {
+        fallbackQueries.push(query);
+        return {
+          query: query.query,
+          provider: "news",
+          kind: "news",
+          results: [
+            {
+              title: "Fallback story",
+              url: "https://news.example.com/story",
+              snippet: "read",
+              source: "news.example.com",
+            },
+          ],
+        };
+      },
+    };
+    const tool = new SearchTool({ provider: primary, fallback, domains: ["news.example.com"] });
+
+    const response = await tool.execute({ query: "x" });
+
+    expect(response.provider).toBe("news");
+    expect(response.results[0]?.title).toBe("Fallback story");
+    expect(fallbackQueries[0]?.domains).toEqual(["news.example.com"]);
+    expect(tool.description).toContain("recent news coverage");
+  });
+
+  test("reports both failures when the fallback also fails", async () => {
+    const failing = (name: string, error: string): SearchProvider => ({
+      name,
+      kind: name === "news" ? "news" : "web",
+      search: async () => {
+        throw new Error(error);
+      },
+    });
+    const tool = new SearchTool({
+      provider: failing("perplexity", "primary down"),
+      fallback: failing("news", "fallback down"),
+    });
+
+    await expect(tool.execute({ query: "x" })).rejects.toThrow(
+      /perplexity search failed.*primary down.*news fallback failed.*fallback down/,
+    );
+  });
+});

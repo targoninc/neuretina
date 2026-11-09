@@ -1,8 +1,14 @@
 import type { Tool } from "../agents/Tool.ts";
-import { createSocialSearchTool, createWebSearchTools } from "../agents/tools/searchTools.ts";
+import {
+  createNewsSearchTool,
+  createSocialSearchTool,
+  createWebSearchTools,
+} from "../agents/tools/searchTools.ts";
 import { ReportSearchTool } from "../agents/tools/ReportSearchTool.ts";
 import { SearchTool } from "../agents/tools/SearchTool.ts";
+import { WebFetchTool } from "../agents/tools/WebFetchTool.ts";
 import type { SearchProvider, SearchRecency } from "../capabilities/search/SearchProvider.ts";
+import { NewsSearchProvider } from "../providers/search/NewsSearchProvider.ts";
 import type { ReportStore } from "../domain/reports/ReportRepository.ts";
 
 export interface ResearchToolDefaults {
@@ -17,6 +23,8 @@ export interface ResearchToolDeps {
   /** All configured web providers; one `search.<name>` tool each. */
   searchProviders?: SearchProvider[];
   socialSearch: SearchProvider;
+  /** Keyless news search used when a web provider fails; injectable for tests. */
+  fallbackSearch?: SearchProvider;
   reports: ReportStore;
   defaults: ResearchToolDefaults;
 }
@@ -41,6 +49,13 @@ export function createResearchTools(
       ? deps.searchProviders
       : [deps.webSearch];
   const { defaults } = deps;
+  const language = options.language ?? defaults.language;
+  const news =
+    deps.fallbackSearch ??
+    new NewsSearchProvider({
+      defaultLimit: defaults.resultsPerProvider,
+      language,
+    });
 
   return [
     ...(options.wikipedia
@@ -59,9 +74,17 @@ export function createResearchTools(
     ...createWebSearchTools(providers, {
       limit: defaults.resultsPerProvider,
       recency: defaults.recency,
-      language: options.language ?? defaults.language,
+      language,
+      domains: defaults.searchDomains,
+      fallback: news,
+    }),
+    createNewsSearchTool(news, {
+      limit: defaults.resultsPerProvider,
+      recency: defaults.recency,
+      language,
       domains: defaults.searchDomains,
     }),
+    new WebFetchTool(),
     createSocialSearchTool(deps.socialSearch, {
       limit: defaults.resultsPerProvider,
       recency: defaults.recency,

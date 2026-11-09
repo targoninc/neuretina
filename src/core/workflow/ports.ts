@@ -51,7 +51,8 @@ export const PORT_TYPES: readonly PortType[] = [
   },
   {
     id: "implications",
-    title: "Implications",
+    title: "Deepened report",
+    description: "A report with follow-up findings woven into its topic sections.",
     base: "text",
     metadata: [{ name: "sources", title: "Sources" }],
   },

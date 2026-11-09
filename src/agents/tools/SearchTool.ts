@@ -1,8 +1,11 @@
 import type { SearchProvider, SearchResponse } from "../../capabilities/search/SearchProvider.ts";
+import { errorMessage } from "../../core/errors.ts";
 import type { Tool } from "../Tool.ts";
 
 export interface SearchToolOptions {
   provider: SearchProvider;
+  /** Used when the primary provider fails, e.g. a keyless news search. */
+  fallback?: SearchProvider;
   toolName?: string;
   description?: string;
   defaultLimit?: number;
@@ -21,6 +24,7 @@ export class SearchTool implements Tool<SearchResponse> {
   readonly parameters: Record<string, unknown>;
 
   private readonly provider: SearchProvider;
+  private readonly fallback?: SearchProvider;
   private readonly defaultLimit: number;
   private readonly defaultRecency?: SearchToolOptions["defaultRecency"];
   private readonly defaultLanguage?: string;
@@ -29,6 +33,7 @@ export class SearchTool implements Tool<SearchResponse> {
 
   constructor(options: SearchToolOptions) {
     this.provider = options.provider;
+    this.fallback = options.fallback;
     this.name = options.toolName ?? `${options.provider.name}_search`;
     this.defaultLimit = options.defaultLimit ?? 6;
     this.defaultRecency = options.defaultRecency;
@@ -37,10 +42,13 @@ export class SearchTool implements Tool<SearchResponse> {
     this.allowScope = options.allowScope ?? true;
 
     const base = options.description ?? describeKind(this.provider);
+    const fallbackNote = this.fallback
+      ? " If the provider is unavailable, recent news coverage is searched instead."
+      : "";
     this.description =
       this.domains.length > 0 && this.allowScope
-        ? `${base} Results are limited to a curated allowlist of reputable sources (established outlets, Wikipedia, primary .gov sources) by default; pass scope "open" only when you need an official or niche page that the allowlist cannot cover, such as release notes or documentation.`
-        : base;
+        ? `${base} Results are limited to a curated allowlist of reputable sources (established outlets, Wikipedia, primary .gov sources) by default; pass scope "open" only when you need an official or niche page that the allowlist cannot cover, such as release notes or documentation.${fallbackNote}`
+        : `${base}${fallbackNote}`;
 
     const properties: Record<string, unknown> = {
       query: {
@@ -79,8 +87,20 @@ export class SearchTool implements Tool<SearchResponse> {
     const recency = isRecency(args.recency) ? args.recency : this.defaultRecency;
     const open = this.allowScope && args.scope === "open";
     const domains = open || this.domains.length === 0 ? undefined : this.domains;
+    const search = { query, limit, recency, language: this.defaultLanguage, domains };
 
-    return this.provider.search({ query, limit, recency, language: this.defaultLanguage, domains });
+    try {
+      return await this.provider.search(search);
+    } catch (error) {
+      if (!this.fallback) throw error;
+      try {
+        return await this.fallback.search(search);
+      } catch (fallbackError) {
+        throw new Error(
+          `${this.provider.name} search failed (${errorMessage(error)}); ${this.fallback.name} fallback failed (${errorMessage(fallbackError)})`,
+        );
+      }
+    }
   }
 }
 

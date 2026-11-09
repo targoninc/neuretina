@@ -110,11 +110,13 @@ describe("agent cost collection", () => {
               "search.perplexity": 2,
               "search.exa": 2,
               "search.wikipedia": 1,
+              "search.news": 3,
               "search.bluesky": 4,
             },
           },
         },
         { tool: "search.perplexity" },
+        { tool: "search.news" },
         { tool: "search.bluesky" },
       ],
     });
@@ -165,7 +167,12 @@ describe("agent cost collection", () => {
         {
           tool: "run_code",
           result: {
-            toolCallsByTool: { "search.perplexity": 1, "search.exa": 2, "search.bluesky": 3 },
+            toolCallsByTool: {
+              "search.perplexity": 1,
+              "search.exa": 2,
+              "search.news": 3,
+              "search.bluesky": 3,
+            },
             toolUsages: [{ tool: "search.perplexity", usage: { costUsd: 0.005 } }],
           },
         },
@@ -183,6 +190,7 @@ describe("agent cost collection", () => {
     expect(exa?.usd).toBe(0);
 
     expect(report.lines.some((line) => line.provider === "bluesky")).toBe(false);
+    expect(report.lines.some((line) => line.provider === "news")).toBe(false);
     // Exa reports no cost, so the report cannot be complete.
     expect(report.complete).toBe(false);
   });

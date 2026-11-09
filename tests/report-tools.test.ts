@@ -76,4 +76,24 @@ describe("past report tools", () => {
     await expect(tool.execute({ id: "missing" })).rejects.toThrow("No earlier report");
     await expect(tool.execute({})).rejects.toThrow("`id` is required");
   });
+
+  test("hides legacy implications sections from earlier reports", async () => {
+    const db = new SqliteDatabase(":memory:");
+    const reports = new ReportRepository(new ArtifactRepository(db));
+    reports.create({
+      topics: ["Rust"],
+      markdown:
+        "# Morning report\n\n## Rust\nAll quiet.\n\n## Implications\nRust adoption keeps accelerating.",
+      narration: "",
+      sources: [],
+    });
+
+    const found = await new ReportSearchTool(reports).execute({ query: "Rust" });
+    expect(found.reports[0]?.excerpt).toContain("All quiet");
+    expect(found.reports[0]?.excerpt).not.toContain("## Implications");
+
+    const report = await new ReportGetTool(reports).execute({ id: found.reports[0]!.id });
+    expect(report.markdown).toContain("## Rust");
+    expect(report.markdown).not.toContain("## Implications");
+  });
 });

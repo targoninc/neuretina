@@ -59,6 +59,7 @@ export function filterSources(sources: ReportSource[], query: string): ReportSou
 const PROVIDER_LABELS: Record<string, string> = {
   perplexity: "Perplexity",
   exa: "Exa",
+  news: "News",
   yahoo: "Yahoo Finance",
   bluesky: "Bluesky",
 };

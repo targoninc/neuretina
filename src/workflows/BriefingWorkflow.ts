@@ -52,6 +52,7 @@ import {
   selectTimelineEvents,
 } from "./EventTimeline.ts";
 import { FollowupResearch } from "./FollowupResearch.ts";
+import { hasGenericSection, stripGenericSections } from "../domain/reports/reportRevision.ts";
 import { SourceUpgrades } from "./SourceUpgrades.ts";
 
 export { extractJson };
@@ -199,6 +200,7 @@ Plan first:
 - Social discussion carries as much weight as the reporting: run at least one Bluesky search per run, and treat it as the place where hype, skepticism and disagreement actually show up.
 - When a topic touches a publicly traded company, an ETF or the markets, use the finance tools for concrete numbers (quotes, revenue, margins, guidance, analyst estimates) — state the business question first, then the company or ticker.
 - Web search is restricted to a curated list of reputable sources. Only switch a query to scope "open" when that list cannot cover the topic at all (release notes, official documentation, a niche community) — prefer reputable coverage whenever it exists.
+- If a web provider fails, search.news covers recent press without an API key, and web.fetch opens any public page directly. Use web.fetch whenever a snippet is too thin, a primary page needs verifying, or a news site must be read without a search provider.
 - Search earlier reports by topic with past_reports and open any of them in full with past_report, so your notes build on what was already covered instead of repeating it.
 - Run at most 6 searches in total across web and social, plus at most 2 finance lookups. Do not run near-identical queries twice.
 
@@ -225,7 +227,7 @@ Spoken delivery — this text is read aloud by a text-to-speech model, sentence 
 - Complete, speakable sentences with a natural rhythm. Avoid fragments, stacked parentheticals, slashes, and symbol-heavy shorthand.
 - Write out anything that sounds wrong when read mechanically: "percent" instead of %, "and" instead of &, natural number and date wording, and expand uncommon abbreviations on first mention.
 - Everyday expressions and idioms are welcome when they fit ("the industry is holding its breath", "a rough week for regulators") — but never let them smuggle in an opinion; keep the neutrality rules below.
-- The same text doubles as the written message, so keep a light markdown structure (a title and short paragraphs).
+- The same text doubles as the written message, so keep a light markdown structure: a title, ## subheadings for topics that stand apart, and short paragraphs.
 
 Opinion and dispute get equal billing:
 - Do not merely summarise news articles: the social discussion is a first-class source. Where Bluesky shows sharply divided or heated opinions — hype versus backlash, experts contradicting each other — report the range of views explicitly and how split the reaction is.
@@ -238,7 +240,7 @@ Tone:
 
 House style:
 - The input may carry a "style" describing how this report should read. When present, it overrides the default tone and guides the framing and emphasis — follow it closely wherever it does not conflict with these rules.
-- The rules in this prompt always win: neutral reporting, inline citations, the word budget, one paragraph per subtopic, and speakable sentences. If the style asks for something incompatible, keep the rule and take only the parts of the style that fit.
+- The rules in this prompt always win: neutral reporting, inline citations, the word budget, one section per subtopic, and speakable sentences. If the style asks for something incompatible, keep the rule and take only the parts of the style that fit.
 - A style changes how the report sounds, never what it may claim: it never justifies invented material, missing citations, padding, or taking a side where the sources disagree.
 
 Substance — every sentence must earn its place:
@@ -256,15 +258,15 @@ Already-reported news — report only what changed:
 
 Hard budget — brevity beats completeness:
 - The entire report, title aside, must stay under 150 words. Shorter is better.
-- One short paragraph per subtopic, and at most 4 paragraphs in total. No lists, no "Worth a look" section, no action items.
+- One short paragraph per subtopic, with a ## subheading when the report covers more than one clearly separable topic, and at most 4 topic sections in total. No lists, no "Worth a look" section, no action items.
 - Every sentence must add new information. Delete greetings, scene-setting, connective filler, hedges, repetition, and anything a reader could guess.
 - If two sentences overlap, keep the sharper one. Prefer concrete nouns and verbs over adjectives.
 
-Shape — one paragraph per subtopic:
-- Group the material into its distinct subtopics or stories (merging overlapping topics), then give each one its own short paragraph, separated by a blank line. Lead with what actually matters most.
-- Keep each paragraph on a single subtopic: never mash unrelated stories into one paragraph, and never split one story across paragraphs.
-- No sub-headings and no lists of any kind — only the title and the paragraphs.
-- No preamble, no closing remarks.
+Shape — one section per subtopic:
+- Group the material into its distinct subtopics or stories (merging overlapping topics). When there is more than one clearly separable topic, give each one its own short ## subheading followed by one short paragraph, separated by a blank line. When the report covers a single topic, skip the subheading and just write the paragraph. Lead with what actually matters most.
+- Use ## only for short topic names that sound natural when read aloud. Never create an "Implications", "Context", "Background", "Analysis" or "Takeaways" section: implications and context belong inside the topic they affect.
+- Keep each section on a single subtopic: never mash unrelated stories into one section, and never split one story across sections.
+- No lists of any kind, no deeper headings than ##, no preamble, no closing remarks.
 
 Inline citations — every claim shows its source:
 - The source list you receive is numbered. Directly after every factual claim, add the matching number in square brackets: "Spotify crossed 300 million subscribers [4]." or "Revenue grew 12 percent [7][9]."
@@ -317,7 +319,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
           type: "compile",
           after: ["research"],
           title: "Compile report",
-          description: "Turns the research notes into one short, neutral report.",
+          description: "Turns the research notes into one short, neutral report grouped by topic.",
           inputs: [{ kind: "research", title: "Research notes", required: true }],
           outputs: [{ kind: "draft", title: "Draft", guaranteed: true }],
           run: this.compileStep.bind(this),
@@ -328,7 +330,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
           after: ["compile"],
           title: "Dig deeper",
           description:
-            "Plans follow-up questions from the draft and appends an Implications section.",
+            "Plans follow-up questions from the draft and weaves the findings into its topic sections.",
           inputs: [
             {
               kind: "text",
@@ -341,8 +343,9 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
           outputs: [
             {
               kind: "implications",
-              title: "Implications",
-              description: "The draft with the section appended; absent when nothing was added.",
+              title: "Deepened report",
+              description:
+                "The draft with follow-up findings woven into its topic sections; absent when nothing was added.",
               guaranteed: false,
             },
           ],
@@ -759,8 +762,12 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     return this.deps.reports
       .list(REPORT_HISTORY_SCAN, contextId)
       .filter((report) => report.workflow === workflowId && report.markdown.trim().length > 0)
-      .slice(0, MAX_PREVIOUS_BRIEFS)
-      .map((report) => ({ date: isoDate(report.createdAt), markdown: report.markdown }));
+      .map((report) => ({
+        date: isoDate(report.createdAt),
+        markdown: stripGenericSections(report.markdown),
+      }))
+      .filter((report) => report.markdown.length > 0)
+      .slice(0, MAX_PREVIOUS_BRIEFS);
   }
 
   private async compileStep(ctx: StepContext): Promise<StepResult> {
@@ -797,8 +804,8 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
 
   /**
    * Dispatches subagents to dig into implications and context the draft may
-   * be missing, then appends what they found as an "Implications" section. A
-   * failed pass just leaves the draft as it is (step output stays empty).
+   * be missing, then weaves what they found into the matching topic sections.
+   * A failed pass just leaves the draft as it is (step output stays empty).
    */
   private async followupsStep(ctx: StepContext): Promise<StepResult> {
     const draft = inputValue(ctx, "text") as TextPortValue | undefined;
@@ -819,7 +826,8 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     return {
       outputs: {
         implications: {
-          ...deeper.combined,
+          text: deeper.markdown,
+          narration: sanitizeNarration(stripMarkdown(deeper.markdown)),
           metadata: { sources: deeper.sources },
         },
       },
@@ -1190,8 +1198,8 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
   /**
    * Plans follow-up questions from the first draft and dispatches one
    * subagent per question (Wikipedia, reputable web search, social search,
-   * past reports), then writes the "Implications" section that gets appended
-   * to the report. Failures are swallowed so the draft survives.
+   * past reports), then folds the findings into the report's topic sections.
+   * Failures are swallowed so the draft survives.
    */
   private async researchFollowups(
     topics: string[],
@@ -1200,7 +1208,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     contextId: string,
     context: WorkflowContext,
     voice: WritingVoice,
-  ): Promise<{ combined: TextPortValue; sources: ReportSource[] } | undefined> {
+  ): Promise<{ markdown: string; sources: ReportSource[] } | undefined> {
     const { correlationId, logger } = context;
     const span = context.statuses?.begin(`${correlationId}:followups`, "Digging deeper", {
       correlationId,
@@ -1236,18 +1244,21 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
       }
 
       const mergedSources = dedupeBy([...sources, ...findings.sources], (source) => source.url).slice(0, 80);
-      const section = await researcher.writeImplications(findings, mergedSources, context, span?.id);
-      if (!section.trim()) {
-        span?.done("Follow-ups found nothing new");
+      const markdown = await researcher.integrateFindings(
+        { topics, draft, findings, sources: mergedSources },
+        context,
+        span?.id,
+      );
+      if (!markdown.trim()) {
+        span?.done("Follow-ups did not change the report");
         return undefined;
       }
 
-      const combined = applyImplications({ text: draft }, { section });
       span?.done(
-        `Implications ready (${tasks.length} follow-up(s), ${mergedSources.length} source(s))`,
-        reportDiffDetail(draft, combined.text),
+        `Follow-ups woven into the report (${tasks.length} follow-up(s), ${mergedSources.length} source(s))`,
+        reportDiffDetail(draft, markdown),
       );
-      return { combined, sources: mergedSources };
+      return { markdown, sources: mergedSources };
     } catch (error) {
       span?.failed(`Digging deeper failed (${errorMessage(error)})`);
       logger.warn("follow-up research failed; keeping the draft", {
@@ -1301,9 +1312,28 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     previous: PreviousBrief[],
     voice: WritingVoice,
   ): Promise<{ markdown: string; narration: string; usage: LlmUsage }> {
-    const draft = await this.requestCompilation(research, context, previous, voice);
-    const draftWords = wordCount(draft.markdown);
+    let draft = await this.requestCompilation(research, context, previous, voice);
 
+    // A model can still fall back to a catch-all "Implications" section. Give
+    // it one targeted chance to fold that content into the topic sections.
+    if (hasGenericSection(draft.markdown)) {
+      try {
+        const repaired = await this.requestCompilation(research, context, previous, voice, {
+          draft: draft.markdown,
+          instruction:
+            "This draft still has a generic catch-all section (Implications, Context, Background, Analysis, Takeaways or Outlook). Rewrite the full report in the required shape: use ## topic subheadings only when the topics are clearly separable, fold the content of the generic section into the topic it belongs to, keep every fact, quote, citation and topic, and add no new material.",
+        });
+        if (!hasGenericSection(repaired.markdown)) {
+          draft = { ...repaired, usage: addUsage(draft.usage, repaired.usage) };
+        }
+      } catch (error) {
+        context.logger.warn("generic-section repair failed; keeping the draft", {
+          error: errorMessage(error),
+        });
+      }
+    }
+
+    const draftWords = wordCount(draft.markdown);
     if (draftWords <= HARD_WORD_CEILING) return draft;
 
     // Brevity is a hard requirement, not a suggestion: one compression pass
@@ -1312,7 +1342,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     try {
       const compressed = await this.requestCompilation(research, context, previous, voice, {
         draft: draft.markdown,
-        words: draftWords,
+        instruction: `This draft is ${draftWords} words; the budget is ${WORD_BUDGET}. Rewrite it shorter, keeping every fact, every inline source link, the split-opinion reporting, the requested style, the topic subheadings and the one-section-per-subtopic shape, with no lists or extra sections. Note that it might be read out by a text-to-speech model, so keep it speakable and natural. Do not invent any material.`,
       });
       if (wordCount(compressed.markdown) < draftWords) {
         return { ...compressed, usage: addUsage(draft.usage, compressed.usage) };
@@ -1330,15 +1360,15 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     context: WorkflowContext,
     previous: PreviousBrief[],
     voice: WritingVoice,
-    compress?: { draft: string; words: number },
+    revision?: { draft: string; instruction: string },
   ): Promise<{ markdown: string; narration: string; usage: LlmUsage }> {
     const style = voice.style ? { style: voice.style } : {};
-    const userContent = compress
+    const userContent = revision
       ? JSON.stringify({
           language: languageName(voice.language),
           ...style,
-          instruction: `This draft is ${compress.words} words; the budget is ${WORD_BUDGET}. Rewrite it shorter, keeping every fact, every inline source link, the split-opinion reporting, the requested style and the one-paragraph-per-subtopic shape, with no lists or extra sections. Note that it might be read out by a text-to-speech model, so keep it speakable and natural. Do not invent any material.`,
-          draft: compress.draft,
+          instruction: revision.instruction,
+          draft: revision.draft,
         })
       : JSON.stringify({
           language: languageName(voice.language),
@@ -1358,11 +1388,11 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         { role: "system", content: COMPILER_SYSTEM_PROMPT },
         { role: "user", content: userContent },
       ],
-        responseFormat: "json",
-        temperature: compress ? 0.2 : 0.3,
-        sessionId: context.correlationId,
-        signal: context.signal,
-      });
+      responseFormat: "json",
+      temperature: revision ? 0.2 : 0.3,
+      sessionId: context.correlationId,
+      signal: context.signal,
+    });
 
     const parsed = extractJson<{ markdown?: unknown }>(completion.text);
     const markdown =
@@ -1428,7 +1458,7 @@ function textReference(value: unknown): string | undefined {
   return typeof reference === "string" && reference ? reference : undefined;
 }
 
-/** Sources carried as metadata by a research/implications text value. */
+/** Sources carried as metadata by a research or follow-up text value. */
 function sourcesOf(value: TextPortValue | undefined): ReportSource[] {
   const sources = value?.metadata?.sources;
   return Array.isArray(sources) ? (sources as ReportSource[]) : [];
@@ -1448,8 +1478,12 @@ function finalSources(ctx: StepContext): ReportSource[] {
   );
 }
 
-function applyImplications(draft: TextPortValue, deeper: { section: string }): TextPortValue {
-  const text = `${draft.text.trimEnd()}\n\n## Implications\n\n${deeper.section.trim()}`;
+/**
+ * Rebuilds the appended-section text of checkpoints written before findings
+ * were integrated, so interrupted legacy runs resume with the report they had.
+ */
+function legacyImplicationsText(draft: TextPortValue, section: string): TextPortValue {
+  const text = `${draft.text.trimEnd()}\n\n## Implications\n\n${section.trim()}`;
   return { text, narration: sanitizeNarration(stripMarkdown(text)) };
 }
 
@@ -1497,16 +1531,18 @@ function migrateResume(resume: unknown): PipelineState | undefined {
   const compiledValue = progress.compiled ? draftValue(progress.compiled) : undefined;
   if (compiledValue) state.steps.compile = { draft: compiledValue };
 
-  const withImplications =
+  const withLegacyImplications =
     compiledValue && progress.implications
       ? {
-          ...applyImplications(compiledValue, progress.implications),
+          ...legacyImplicationsText(compiledValue, progress.implications.section),
           metadata: { sources: progress.implications.sources },
         }
       : compiledValue;
 
   if (progress.implications !== undefined) {
-    state.steps.followups = progress.implications ? { implications: withImplications } : {};
+    state.steps.followups = progress.implications
+      ? { implications: withLegacyImplications }
+      : {};
   }
 
   if (progress.upgraded !== undefined && compiledValue) {
@@ -1515,7 +1551,7 @@ function migrateResume(resume: unknown): PipelineState | undefined {
           text: progress.upgraded.markdown,
           narration: sanitizeNarration(stripMarkdown(progress.upgraded.markdown)),
         }
-      : withImplications ?? compiledValue;
+      : withLegacyImplications ?? compiledValue;
     state.steps.sources = {
       draft,
       sources: progress.upgraded ? progress.upgraded.sources : progressSources(progress),

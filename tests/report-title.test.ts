@@ -13,9 +13,9 @@ describe("reportTitle", () => {
   });
 
   test("never mistakes a section heading for the title", () => {
-    const markdown = "**Actual title**\n\nBody\n\n## Implications\n\nMore";
+    const markdown = "**Actual title**\n\nBody\n\n## Background\n\nMore";
     expect(reportTitle({ markdown, topics: ["a"] })).toBe("Actual title");
-    expect(reportTitle({ markdown: "Body only\n\n## Implications", topics: ["a", "b"] })).toBe(
+    expect(reportTitle({ markdown: "Body only\n\n## Background", topics: ["a", "b"] })).toBe(
       "a, b",
     );
   });

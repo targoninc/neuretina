@@ -1,7 +1,8 @@
-import { wordCount } from "../core/text.ts";
 import { Agent } from "../agents/Agent.ts";
-import { SearchTool } from "../agents/tools/SearchTool.ts";
 import { CodeModeTool } from "../agents/tools/CodeModeTool.ts";
+import { createNewsSearchTool, createWebSearchTools } from "../agents/tools/searchTools.ts";
+import { WebFetchTool } from "../agents/tools/WebFetchTool.ts";
+import { NewsSearchProvider } from "../providers/search/NewsSearchProvider.ts";
 import type { LlmProvider } from "../capabilities/llm/LlmProvider.ts";
 import type { SearchProvider, SearchRecency } from "../capabilities/search/SearchProvider.ts";
 import { addAgentCost } from "../core/cost/agentCosts.ts";
@@ -11,6 +12,7 @@ import { reportDiffDetail } from "../core/status/StatusHub.ts";
 import type { WorkflowContext } from "../core/workflow/Workflow.ts";
 import type { ReportSource } from "../domain/reports/ReportRepository.ts";
 import { collectSources } from "./agentResults.ts";
+import { hasGenericSection, isAcceptableRevision } from "../domain/reports/reportRevision.ts";
 
 export interface SourceUpgrade {
   /** 1-based number of the existing source this replaces. */
@@ -38,6 +40,8 @@ export interface SourceUpgradesDeps {
   webSearch: SearchProvider;
   /** All configured web providers; one open-web search.<name> tool each. */
   searchProviders?: SearchProvider[];
+  /** Keyless news search used when a web provider fails; injectable for tests. */
+  fallbackSearch?: SearchProvider;
   defaults: {
     recency: SearchRecency;
     resultsPerProvider: number;
@@ -52,7 +56,7 @@ const SOURCE_UPGRADES_SYSTEM_PROMPT = `You run the source upgrades pass on a fin
 
 A primary source is where the information originated: an official announcement or press release, a company blog or investor-relations page, a filing, a regulator or government publication, the original dataset, documentation, or the announcement post itself. News coverage about the announcement is secondary; the announcement is primary.
 
-You research by writing JavaScript through the run_code tool: one small async function per run that calls the web-search functions listed in the tool description and returns compact findings. Run independent calls in parallel with Promise.all.
+You research by writing JavaScript through the run_code tool: one small async function per run that calls the web-search functions listed in the tool description and returns compact findings. Run independent calls in parallel with Promise.all. web.fetch is always available to open a result and verify the primary source directly; search.news is the keyless fallback when a web provider is unavailable.
 
 Rules:
 - Upgrade only claims that plausibly have a primary source: launches, releases, announcements, filings, official statistics, policy decisions.
@@ -60,7 +64,7 @@ Rules:
 - Use only URLs that appeared in your search results — never invent one.
 - Verify the primary source actually supports the claim before using it; if it does not, leave the claim alone.
 - Keep every citation number exactly as it is: you replace the SOURCE a number points to, and never renumber, add or remove markers. At most ${MAX_SOURCE_UPGRADES} upgrades, best first.
-- Revise the wording only where the primary source is more precise or contradicts the secondary report. Keep the title, the paragraph shape, the "Implications" section, the voice and roughly the same length; change nothing else.
+- Revise the wording only where the primary source is more precise or contradicts the secondary report. Keep the title, the topic ## subheadings, the one-section-per-subtopic shape, the voice and roughly the same length; change nothing else.
 - If the input carries a style, keep the revision in that voice.
 - Finding no primary source is a valid answer.
 
@@ -69,10 +73,10 @@ Finish with a single JSON object and nothing else:
 Return the report text unchanged when no wording revision is needed.`;
 
 /**
- * After the draft (and its implications) is settled, one more research agent
- * traces claims back to primary sources such as official announcements, and
- * replaces the matching entries in the report's source list. Citation numbers
- * stay stable, so the revised text keeps pointing at the right sources.
+ * After the draft (and its follow-up context) is settled, one more research
+ * agent traces claims back to primary sources such as official announcements,
+ * and replaces the matching entries in the report's source list. Citation
+ * numbers stay stable, so the revised text keeps pointing at the right sources.
  */
 export class SourceUpgrades {
   private readonly agent: Agent;
@@ -82,6 +86,21 @@ export class SourceUpgrades {
       deps.searchProviders && deps.searchProviders.length > 0
         ? deps.searchProviders
         : [deps.webSearch];
+    const news =
+      deps.fallbackSearch ??
+      new NewsSearchProvider({
+        defaultLimit: deps.defaults.resultsPerProvider,
+        language: deps.defaults.language,
+      });
+    const searchTools = createWebSearchTools(providers, {
+      limit: deps.defaults.resultsPerProvider,
+      recency: deps.defaults.recency,
+      language: deps.defaults.language,
+      description:
+        "Open web search for primary sources: official announcements, company blogs, filings, documentation and government publications.",
+      fallback: news,
+    });
+
     this.agent = new Agent({
       name: "source-upgrades",
       description: "Traces briefing claims back to primary sources",
@@ -89,18 +108,15 @@ export class SourceUpgrades {
       llm: deps.llm,
       tools: [
         new CodeModeTool({
-          tools: providers.map(
-            (provider) =>
-              new SearchTool({
-                provider,
-                toolName: `search.${provider.name}`,
-                description:
-                  "Open web search for primary sources: official announcements, company blogs, filings, documentation and government publications.",
-                defaultLimit: deps.defaults.resultsPerProvider,
-                defaultRecency: deps.defaults.recency,
-                defaultLanguage: deps.defaults.language,
-              }),
-          ),
+          tools: [
+            ...searchTools,
+            createNewsSearchTool(news, {
+              limit: deps.defaults.resultsPerProvider,
+              recency: deps.defaults.recency,
+              language: deps.defaults.language,
+            }),
+            new WebFetchTool(),
+          ],
           maxToolCalls: 8,
         }),
       ],
@@ -147,6 +163,7 @@ export class SourceUpgrades {
       const revision =
         parsed.markdown &&
         parsed.markdown.trimEnd() !== input.markdown.trimEnd() &&
+        !hasGenericSection(parsed.markdown) &&
         isAcceptableRevision(input.markdown, parsed.markdown, sources.length)
           ? parsed.markdown
           : undefined;
@@ -243,22 +260,5 @@ function countReplacements(previous: ReportSource[], next: ReportSource[]): numb
     if (previous[index]?.url !== next[index]?.url) count++;
   }
   return count;
-}
-
-export function isAcceptableRevision(
-  original: string,
-  revised: string,
-  sourceCount: number,
-): boolean {
-  const revisedWords = wordCount(revised);
-  const originalWords = wordCount(original);
-  if (revisedWords < Math.max(5, Math.ceil(originalWords * 0.5))) return false;
-  if (revisedWords > Math.ceil(originalWords * 1.5) + 20) return false;
-  if (original.includes("## Implications") && !revised.includes("Implications")) return false;
-  for (const match of revised.matchAll(/\[(\d+)\]/g)) {
-    const number = Number(match[1]);
-    if (number < 1 || number > sourceCount) return false;
-  }
-  return true;
 }
 

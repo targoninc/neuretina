@@ -74,8 +74,13 @@ const TOOL_DOCS: Record<string, string> = {
   Web search via Exa's neural/keyword index; a second, independent set of results.`,
   "search.bluesky": `search.bluesky({ query, limit?, recency? }) -> same shape
   Recent Bluesky posts, where hype, skepticism and disagreement show up.`,
+  "search.news": `search.news({ query, limit?, recency?, scope? }) -> same shape
+  Recent news coverage from major outlets, read from public news feeds. Use it when a web provider is unavailable or when the story is best followed in the press.`,
   "search.wikipedia": `search.wikipedia({ query, limit? }) -> same shape
   Wikipedia only (all language editions), for background, definitions and context.`,
+  "web.fetch": `web.fetch({ url, maxChars? }) -> { url, title?, contentType, text, truncated, results: [{ title, url, snippet, source }] }
+  Fetch one public web page and return its readable text. Use it to open a promising result, verify a primary source, or read a news site directly when search is unavailable.`,
+
   "finance.perplexity": `finance.perplexity({ question }) -> { answer, data: [{ category, tickers, content, sources }] }
   Perplexity's finance agent: a synthesized answer plus structured market and financial data for public companies and ETFs. Ask a business question naming the company or ticker.`,
   "finance.yahoo": `finance.yahoo({ question }) -> same shape
@@ -217,7 +222,7 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/\bprocess\s*[.[]/, "process"],
   [/\bBun\s*[.[]/, "Bun"],
   [/\bDeno\s*[.[]/, "Deno"],
-  [/\bfetch\s*\(/, "fetch"],
+  [/(?<![\w.])fetch\s*\(/, "fetch"],
   [/\bXMLHttpRequest\b|\bWebSocket\b/, "network APIs"],
   [/\beval\s*\(/, "eval"],
   [/\bnew\s+Function\b/, "the Function constructor"],

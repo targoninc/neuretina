@@ -32,6 +32,10 @@ import {
 
 const log = createLogger("test", { level: "error" });
 
+/** The report after the follow-up findings are woven into the Rust paragraph. */
+const INTEGRATED_REPORT =
+  "# Morning report\n\n## Rust\nAll quiet. Rust adoption keeps accelerating [1].\n\n## AI regulation\nHeated debate.";
+
 interface SetupOptions {
   webResults?: typeof sampleResults;
   socialResults?: typeof sampleResults;
@@ -44,12 +48,16 @@ interface SetupOptions {
   longCompilerOutput?: boolean;
   /** The stub compiler returns an empty markdown document. */
   emptyCompilerOutput?: boolean;
+  /** The first compiler draft still has a separate Implications section. */
+  genericCompilerOutput?: boolean;
   /** The stub researcher's program calls only the finance lookup. */
   financeOnly?: boolean;
   /** Enable the follow-up planner/subagents. */
   followups?: boolean;
   /** The stub planner reports nothing worth digging into. */
   noFollowupTasks?: boolean;
+  /** The integration pass recreates the old separate implications section. */
+  separateImplications?: boolean;
   /** The primary-source pass returns these upgrades (and optionally a revision). */
   sourceUpgrades?: {
     markdown?: string;
@@ -119,6 +127,17 @@ function setup(options: SetupOptions = {}) {
       if (options.emptyCompilerOutput) {
         return completion(JSON.stringify({ markdown: "" }));
       }
+      if ((request.messages[1]?.content ?? "").includes("generic catch-all section")) {
+        return completion(JSON.stringify({ markdown: INTEGRATED_REPORT }));
+      }
+      if (options.genericCompilerOutput && compilerCalls === 1) {
+        return completion(
+          JSON.stringify({
+            markdown:
+              "# Morning report\n\n## Rust\nAll quiet.\n\n## Implications\nRust adoption keeps accelerating [1].",
+          }),
+        );
+      }
       if (options.longCompilerOutput && compilerCalls === 1) {
         const filler = Array.from({ length: 200 }, (_, index) => `longfact${index}`).join(" ");
         return completion(JSON.stringify({ markdown: `# Morning report\n\n${filler}` }));
@@ -164,14 +183,18 @@ function setup(options: SetupOptions = {}) {
       return completion(
         JSON.stringify({
           found: true,
-          notes: "Implications: Rust adoption is accelerating https://example.com/article",
+          notes: "Context: Rust adoption is accelerating https://example.com/article",
         }),
       );
     }
 
-    if (system.includes("Implications")) {
+    if (system.includes("fold follow-up findings")) {
       return completion(
-        JSON.stringify({ markdown: "Rust adoption keeps accelerating [1]." }),
+        JSON.stringify({
+          markdown: options.separateImplications
+            ? `${INTEGRATED_REPORT}\n\n## Implications\n\nRust adoption keeps accelerating [1].`
+            : INTEGRATED_REPORT,
+        }),
       );
     }
 
@@ -583,7 +606,26 @@ describe("BriefingWorkflow", () => {
     expect(reports.list()).toHaveLength(0);
   });
 
-    test("passes the collected sources to the compiler for inline citations", async () => {    const { workflow, topics, bus, statuses, compilerInputs } = setup();
+  test("repairs a compiler draft that still uses a generic implications section", async () => {
+    const { workflow, topics, reports, bus, statuses, compilerInputs } = setup({
+      genericCompilerOutput: true,
+    });
+    topics.add({ name: "Rust" });
+
+    const output = await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-generic", bus, logger: log, statuses },
+    );
+
+    expect(compilerInputs).toHaveLength(2);
+    expect(compilerInputs[1]).toContain("generic catch-all section");
+    const stored = reports.get(output.reportId!);
+    expect(stored.markdown).not.toContain("## Implications");
+    expect(stored.markdown).toContain("Rust adoption keeps accelerating");
+  });
+
+  test("passes the collected sources to the compiler for inline citations", async () => {
+    const { workflow, topics, bus, statuses, compilerInputs } = setup();
     topics.add({ name: "Rust" });
 
     await workflow.run(
@@ -617,12 +659,37 @@ describe("BriefingWorkflow", () => {
     expect(compilerInputs[1]).toContain("All quiet");
   });
 
+  test("strips legacy implications sections from previous briefings", async () => {
+    const { workflow, topics, reports, bus, statuses, compilerInputs } = setup();
+    topics.add({ name: "Rust" });
+    reports.create({
+      correlationId: "old-report",
+      workflow: "briefing",
+      contextId: "default",
+      topics: ["Rust"],
+      markdown:
+        "# Morning report\n\n## Rust\nAll quiet.\n\n## Implications\nRust adoption keeps accelerating [1].",
+      narration: "Morning report. Rust. All quiet. Rust adoption keeps accelerating.",
+      sources: [],
+    });
+
+    await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-prev-legacy", bus, logger: log, statuses },
+    );
+
+    // The old section is not shown as an example the model might copy.
+    expect(compilerInputs[0]).toContain("previousBriefings");
+    expect(compilerInputs[0]).toContain("All quiet");
+    expect(compilerInputs[0]).not.toContain("## Implications");
+  });
+
   test("records report-text revisions as diffs for the activity feed", async () => {
     const { workflow, topics, bus, statuses } = setup({
       followups: true,
       sourceUpgrades: {
         markdown:
-          "# Morning report\n\n## Rust\nRust 1.90 is out [1].\n\n## Implications\nRust adoption keeps accelerating [1].",
+          "# Morning report\n\n## Rust\nRust 1.90 is out. Rust adoption keeps accelerating [1].\n\n## AI regulation\nHeated debate.",
         upgrades: [],
       },
     });
@@ -645,25 +712,23 @@ describe("BriefingWorkflow", () => {
     expect(compiled.reportDiff.before).toBe("");
     expect(compiled.reportDiff.after).toContain("All quiet");
 
-    // Digging deeper appends the implications section to its step entry.
-    const followup = revisionOf("Implications ready");
+    // Digging deeper weaves the findings into the Rust paragraph.
+    const followup = revisionOf("Follow-ups woven into the report");
     expect(followup.reportDiff.before).toContain("All quiet");
-    expect(followup.reportDiff.after).toContain("## Implications");
+    expect(followup.reportDiff.after).toContain("Rust adoption keeps accelerating");
+    expect(followup.reportDiff.after).not.toContain("## Implications");
 
     // The primary-source pass rewrites the report on its own entry.
     const sources = revisionOf("Primary sources:");
-    expect(sources.reportDiff.before).toContain("## Implications");
+    expect(sources.reportDiff.before).toContain("Rust adoption keeps accelerating");
     expect(sources.reportDiff.after).toContain("Rust 1.90 is out");
   });
 
   test("does not claim a source revision when the model echoes the report back", async () => {
-    const compiled =
-      "# Morning report\n\n## Rust\nAll quiet.\n\n## AI regulation\nHeated debate.";
-    const combined = `${compiled}\n\n## Implications\n\nRust adoption keeps accelerating [1].`;
     const { workflow, topics, bus, statuses } = setup({
       followups: true,
       sourceUpgrades: {
-        markdown: combined,
+        markdown: INTEGRATED_REPORT,
         upgrades: [{ for: 1, title: "Primary", url: "https://origin.example.com/a" }],
       },
     });
@@ -682,7 +747,7 @@ describe("BriefingWorkflow", () => {
     expect(entry?.detail).toBeUndefined();
   });
 
-  test("appends the follow-up findings as an Implications section that is also spoken", async () => {
+  test("weaves the follow-up findings into the topic paragraph and speaks them", async () => {
     const { workflow, topics, reports, bus, statuses, compilerInputs, dispatcherInputs } = setup({
       followups: true,
     });
@@ -698,12 +763,30 @@ describe("BriefingWorkflow", () => {
     expect(dispatcherInputs[0]).toContain("All quiet");
     // ...the main report was not recompiled...
     expect(compilerInputs).toHaveLength(1);
-    // ...and the findings were appended and read aloud.
+    // ...and the findings joined the matching topic paragraph and are read aloud.
     const stored = reports.get(output.reportId!);
-    expect(stored.markdown).toContain("## Implications");
-    expect(stored.markdown).toContain("Rust adoption keeps accelerating");
+    expect(stored.markdown).toContain("## Rust\nAll quiet. Rust adoption keeps accelerating");
+    expect(stored.markdown).not.toContain("## Implications");
     expect(stored.narration).toContain("Rust adoption keeps accelerating");
     expect(stored.narration).not.toContain("[1]");
+  });
+
+  test("rejects an integration that recreates a separate implications section", async () => {
+    const { workflow, topics, reports, bus, statuses } = setup({
+      followups: true,
+      separateImplications: true,
+    });
+    topics.add({ name: "Rust" });
+
+    const output = await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c17b", bus, logger: log, statuses },
+    );
+
+    const stored = reports.get(output.reportId!);
+    expect(stored.markdown).toContain("All quiet");
+    expect(stored.markdown).not.toContain("## Implications");
+    expect(stored.narration).not.toContain("Rust adoption keeps accelerating");
   });
 
   test("skips the second compile when the planner finds nothing worth digging into", async () => {
@@ -723,7 +806,7 @@ describe("BriefingWorkflow", () => {
     expect(compilerInputs).toHaveLength(1);
   });
 
-  test("upgrades secondary coverage to a primary source after the implications pass", async () => {
+  test("upgrades secondary coverage to a primary source after the follow-up pass", async () => {
     const primary = {
       for: 1,
       title: "Rust 1.90 released",
@@ -733,7 +816,7 @@ describe("BriefingWorkflow", () => {
       followups: true,
       sourceUpgrades: {
         markdown:
-          "# Morning report\n\n## Rust\nRust 1.90 is out [1].\n\n## Implications\nRust adoption keeps accelerating [1].",
+          "# Morning report\n\n## Rust\nRust 1.90 is out. Rust adoption keeps accelerating [1].\n\n## AI regulation\nHeated debate.",
         upgrades: [primary],
       },
     });
@@ -750,6 +833,33 @@ describe("BriefingWorkflow", () => {
     expect(stored.markdown).toContain("Rust 1.90 is out");
     expect(stored.narration).toContain("Rust 1.90 is out");
     expect(stored.narration).not.toContain("[1]");
+  });
+
+  test("does not let the primary-source pass reintroduce a separate implications section", async () => {
+    const primary = {
+      for: 1,
+      title: "Rust 1.90 released",
+      url: "https://blog.rust-lang.org/2026/09/01/Rust-1.90.html",
+    };
+    const { workflow, topics, reports, bus, statuses } = setup({
+      followups: true,
+      sourceUpgrades: {
+        markdown:
+          "# Morning report\n\n## Rust\nRust 1.90 is out. Rust adoption keeps accelerating [1].\n\n## Implications\nRust adoption keeps accelerating [1].",
+        upgrades: [primary],
+      },
+    });
+    topics.add({ name: "Rust" });
+
+    const output = await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-generic-source", bus, logger: log, statuses },
+    );
+
+    const stored = reports.get(output.reportId!);
+    expect(stored.sources[0]?.url).toBe(primary.url);
+    expect(stored.markdown).not.toContain("## Implications");
+    expect(stored.markdown).toContain("Rust adoption keeps accelerating");
   });
 
   test("keeps the draft when the primary-source revision is not acceptable", async () => {
@@ -1146,7 +1256,7 @@ describe("BriefingWorkflow", () => {
     expect(compilerInputs[0]).toContain('"language":"English"');
   });
 
-  test("passes the configured style to the compiler, implications and source passes", async () => {
+  test("passes the configured style to the compiler, follow-up and source passes", async () => {
     const { workflow, topics, bus, statuses, compilerInputs, llmRequests } = setup({
       followups: true,
     });
@@ -1161,10 +1271,10 @@ describe("BriefingWorkflow", () => {
     expect(output.skipped).toBe(false);
     expect(compilerInputs[0]).toContain(JSON.stringify(style));
 
-    const implications = llmRequests.find((request) =>
-      (request.messages[0]?.content ?? "").includes("Implications"),
+    const integration = llmRequests.find((request) =>
+      (request.messages[0]?.content ?? "").includes("fold follow-up findings"),
     );
-    expect(implications?.messages[1]?.content).toContain(JSON.stringify(style));
+    expect(integration?.messages[1]?.content).toContain(JSON.stringify(style));
 
     const upgrades = llmRequests.find((request) =>
       (request.messages[0]?.content ?? "").includes("source upgrades"),
