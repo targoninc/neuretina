@@ -25,6 +25,8 @@ export interface FollowupResearchDeps {
   /** All configured web providers; one search.<name> tool each. */
   searchProviders?: SearchProvider[];
   socialSearch: SearchProvider;
+  /** House style the implications section should match, when configured. */
+  style?: string;
   defaults: {
     recency: SearchRecency;
     resultsPerProvider: number;
@@ -76,7 +78,7 @@ const IMPLICATIONS_SYSTEM_PROMPT = `You write the "Implications" section that is
 Write at most 2 short paragraphs (under 80 words in total) covering what the findings imply and the context that matters. This text is also read aloud by a text-to-speech model.
 
 Rules:
-- Conversational, neutral and speakable, like the rest of the report: plain words, short sentences, active voice.
+- Neutral and speakable, in the same voice and framing as the rest of the report: plain words, short sentences, active voice. When the input carries a style, apply it here too.
 - Cite every claim with the matching number in square brackets from the source list, e.g. "… [4]".
 - No heading, no preamble, no lists, no links, no URLs.
 - Never invent material; use only the findings.
@@ -229,6 +231,7 @@ export class FollowupResearch {
             role: "user",
             content: JSON.stringify({
               language: languageName(this.deps.defaults.language),
+              ...(this.deps.style ? { style: this.deps.style } : {}),
               sources: sources.map((source, index) => ({ n: index + 1, title: source.title })),
               findings: findings.notes,
             }),

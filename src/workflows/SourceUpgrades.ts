@@ -23,6 +23,8 @@ export interface SourceUpgradeInput {
   topics: string[];
   markdown: string;
   sources: ReportSource[];
+  /** House style the revision must preserve, when configured. */
+  style?: string;
 }
 
 export interface SourceUpgradeOutcome {
@@ -58,7 +60,8 @@ Rules:
 - Use only URLs that appeared in your search results — never invent one.
 - Verify the primary source actually supports the claim before using it; if it does not, leave the claim alone.
 - Keep every citation number exactly as it is: you replace the SOURCE a number points to, and never renumber, add or remove markers. At most ${MAX_SOURCE_UPGRADES} upgrades, best first.
-- Revise the wording only where the primary source is more precise or contradicts the secondary report. Keep the title, the paragraph shape, the "Implications" section and roughly the same length; change nothing else.
+- Revise the wording only where the primary source is more precise or contradicts the secondary report. Keep the title, the paragraph shape, the "Implications" section, the voice and roughly the same length; change nothing else.
+- If the input carries a style, keep the revision in that voice.
 - Finding no primary source is a valid answer.
 
 Finish with a single JSON object and nothing else:
@@ -171,6 +174,7 @@ export class SourceUpgrades {
 function buildSourceUpgradePrompt(input: SourceUpgradeInput): string {
   return JSON.stringify({
     topics: input.topics,
+    ...(input.style ? { style: input.style } : {}),
     report: input.markdown,
     sources: input.sources.map((source, index) => ({
       n: index + 1,

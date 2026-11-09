@@ -150,6 +150,13 @@ interface Draft {
   narration: string;
 }
 
+/** The language and optional house style every written artifact follows. */
+interface WritingVoice {
+  language: string;
+  /** Free-form style guidance; absent keeps the default briefing voice. */
+  style?: string;
+}
+
 /** An earlier briefing the compiler dedupes the new report against. */
 interface PreviousBrief {
   date: string;
@@ -170,6 +177,15 @@ const LANGUAGE_INPUT: WorkflowInputSpec = {
   id: "language",
   kind: "language",
   title: "Language",
+  required: false,
+  multiple: false,
+};
+
+/** How the report should read: tone, framing and emphasis. */
+const STYLE_INPUT: WorkflowInputSpec = {
+  id: "style",
+  kind: "style",
+  title: "Style",
   required: false,
   multiple: false,
 };
@@ -217,8 +233,13 @@ Opinion and dispute get equal billing:
 - Give each side its strongest case, fairly, still without taking one.
 
 Tone:
-- Conversational, like telling a well-informed friend what's going on: plain words, short sentences, active voice. No press-release or agency-speak.
+- Default voice: conversational, like telling a well-informed friend what's going on: plain words, short sentences, active voice. No press-release or agency-speak. A style in the input can replace this default voice (see House style).
 - Still strictly neutral: report what sources claim and where they disagree — never take sides or add opinions.
+
+House style:
+- The input may carry a "style" describing how this report should read. When present, it overrides the default tone and guides the framing and emphasis — follow it closely wherever it does not conflict with these rules.
+- The rules in this prompt always win: neutral reporting, inline citations, the word budget, one paragraph per subtopic, and speakable sentences. If the style asks for something incompatible, keep the rule and take only the parts of the style that fit.
+- A style changes how the report sounds, never what it may claim: it never justifies invented material, missing citations, padding, or taking a side where the sources disagree.
 
 Substance — every sentence must earn its place:
 - Write like a sharp editor curating for a busy reader: pick the two to four developments that genuinely change their understanding, not the easiest ones to summarise.
@@ -271,7 +292,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         "Researches all configured topics (web + social), compiles a neutral report, generates audio and delivers it.",
       contextId: DEFAULT_CONTEXT_ID,
       triggers: [{ kind: "schedule" as const }, { kind: "manual" as const }],
-      inputs: [TOPICS_INPUT, LANGUAGE_INPUT],
+      inputs: [TOPICS_INPUT, LANGUAGE_INPUT, STYLE_INPUT],
       steps: [
         {
           id: "research",
@@ -522,6 +543,18 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     return typeof value === "string" && value ? value : this.deps.defaults.language;
   }
 
+  /** Free-form style guidance, or undefined for the default briefing voice. */
+  private styleOf(ctx: StepContext): string | undefined {
+    const value = ctx.inputs.style;
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  }
+
+  /** The language and house style every written artifact follows. */
+  private voiceOf(ctx: StepContext): WritingVoice {
+    const style = this.styleOf(ctx);
+    return { language: this.languageOf(ctx), ...(style ? { style } : {}) };
+  }
+
   /** Renders the report artifact as a text message for its assigned channels. */
   private renderReport(value: unknown): DeliveryMessage | undefined {
     const reference = textReference(value);
@@ -747,7 +780,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         { topics: topicNames, notes: research.text, sources: sourcesOf(research) },
         ctx.run,
         previous,
-        this.languageOf(ctx),
+        this.voiceOf(ctx),
       );
       if (draft.usage) {
         compileSpan?.addCost(ctx.run.cost?.addLlm("Compilation", draft.usage) ?? 0);
@@ -779,7 +812,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
       research ? sourcesOf(research) : [],
       contextId,
       ctx.run,
-      this.languageOf(ctx),
+      this.voiceOf(ctx),
     );
     if (!deeper) return { outputs: {} };
 
@@ -807,7 +840,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
       draft.text,
       sources,
       ctx.run,
-      this.languageOf(ctx),
+      this.voiceOf(ctx),
     );
     if (!upgraded) return { outputs: { draft, sources } };
 
@@ -1166,7 +1199,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     sources: ReportSource[],
     contextId: string,
     context: WorkflowContext,
-    language: string,
+    voice: WritingVoice,
   ): Promise<{ combined: TextPortValue; sources: ReportSource[] } | undefined> {
     const { correlationId, logger } = context;
     const span = context.statuses?.begin(`${correlationId}:followups`, "Digging deeper", {
@@ -1181,10 +1214,11 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         webSearch: this.deps.webSearch,
         searchProviders: this.deps.searchProviders,
         socialSearch: this.deps.socialSearch,
+        ...(voice.style ? { style: voice.style } : {}),
         defaults: {
           recency: this.deps.defaults.recency,
           resultsPerProvider: this.deps.defaults.resultsPerProvider,
-          language,
+          language: voice.language,
           searchDomains: this.deps.defaults.searchDomains,
         },
       });
@@ -1228,7 +1262,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     markdown: string,
     sources: ReportSource[],
     context: WorkflowContext,
-    language: string,
+    voice: WritingVoice,
   ): Promise<{ markdown: string; sources: ReportSource[] } | undefined> {
     try {
       const upgrades = new SourceUpgrades({
@@ -1238,11 +1272,14 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
         defaults: {
           recency: this.deps.defaults.recency,
           resultsPerProvider: this.deps.defaults.resultsPerProvider,
-          language,
+          language: voice.language,
         },
       });
 
-      const outcome = await upgrades.run({ topics, markdown, sources }, context);
+      const outcome = await upgrades.run(
+        { topics, markdown, sources, ...(voice.style ? { style: voice.style } : {}) },
+        context,
+      );
       if (!outcome) return undefined;
 
       context.logger.info("primary-source pass complete", {
@@ -1262,9 +1299,9 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     research: { topics: string[]; notes: string; sources: ReportSource[] },
     context: WorkflowContext,
     previous: PreviousBrief[],
-    language: string,
+    voice: WritingVoice,
   ): Promise<{ markdown: string; narration: string; usage: LlmUsage }> {
-    const draft = await this.requestCompilation(research, context, previous, language);
+    const draft = await this.requestCompilation(research, context, previous, voice);
     const draftWords = wordCount(draft.markdown);
 
     if (draftWords <= HARD_WORD_CEILING) return draft;
@@ -1273,7 +1310,7 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     // for over-long drafts before anything is spoken or delivered.
     context.logger.warn("report over word budget; compressing", { words: draftWords });
     try {
-      const compressed = await this.requestCompilation(research, context, previous, language, {
+      const compressed = await this.requestCompilation(research, context, previous, voice, {
         draft: draft.markdown,
         words: draftWords,
       });
@@ -1292,17 +1329,20 @@ export class BriefingWorkflow implements Workflow<BriefingWorkflowInput, Briefin
     research: { topics: string[]; notes: string; sources: ReportSource[] },
     context: WorkflowContext,
     previous: PreviousBrief[],
-    language: string,
+    voice: WritingVoice,
     compress?: { draft: string; words: number },
   ): Promise<{ markdown: string; narration: string; usage: LlmUsage }> {
+    const style = voice.style ? { style: voice.style } : {};
     const userContent = compress
       ? JSON.stringify({
-          language: languageName(language),
-          instruction: `This draft is ${compress.words} words; the budget is ${WORD_BUDGET}. Rewrite it shorter, keeping every fact, every inline source link, the split-opinion reporting and the one-paragraph-per-subtopic shape, with no lists or extra sections. Note that it might be read out by a text-to-speech model, so keep it speakable and natural. Do not invent any material.`,
+          language: languageName(voice.language),
+          ...style,
+          instruction: `This draft is ${compress.words} words; the budget is ${WORD_BUDGET}. Rewrite it shorter, keeping every fact, every inline source link, the split-opinion reporting, the requested style and the one-paragraph-per-subtopic shape, with no lists or extra sections. Note that it might be read out by a text-to-speech model, so keep it speakable and natural. Do not invent any material.`,
           draft: compress.draft,
         })
       : JSON.stringify({
-          language: languageName(language),
+          language: languageName(voice.language),
+          ...style,
           date: isoDate(),
           topics: research.topics,
           sources: research.sources.map((source, index) => ({

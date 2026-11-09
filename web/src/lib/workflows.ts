@@ -1,5 +1,6 @@
 import iconHistory from "@ktibow/iconset-material-symbols/history";
 import iconInfo from "@ktibow/iconset-material-symbols/info";
+import { briefingStyleName } from "../../../src/core/briefingStyle.ts";
 import type { WorkflowInfo, WorkflowRunDetail, WorkflowRunInfo } from "./api";
 
 /** Tabs shown right of the workflow list. */
@@ -71,7 +72,8 @@ export function workflowSummary(workflow: WorkflowInfo, channelCount: number): s
   }
   const topicIds = workflow.inputValues?.topics;
   const topicCount = Array.isArray(topicIds) ? topicIds.length : 0;
-  return `${topicCount} topic(s) · ${channelCount} channel(s)`;
+  const style = briefingStyleName(workflow.inputValues?.style);
+  return `${style ? `${style} style · ` : ""}${topicCount} topic(s) · ${channelCount} channel(s)`;
 }
 
 export function triggerLabel(run: WorkflowRunInfo): string {

@@ -441,6 +441,24 @@ describe("user workflows through the gateway", () => {
     expect(badLanguage.status).toBe(400);
     expect(badLanguage.body.error).toContain("Unsupported language");
 
+    // A style is free-form text, trimmed and stored verbatim.
+    const withStyle = await call<UserWorkflowInfo>("workflow.user.create", {
+      name: "Analyst desk",
+      inputs: { topics: [topic.id], style: "  Measured and data-forward.  " },
+    });
+    expect(withStyle.inputs).toEqual({
+      topics: [topic.id],
+      style: "Measured and data-forward.",
+    });
+    await call("workflow.user.remove", { id: withStyle.id });
+
+    const badStyle = await post({
+      type: "workflow.user.create",
+      payload: { name: "Bad style", inputs: { topics: [topic.id], style: 42 } },
+    });
+    expect(badStyle.status).toBe(400);
+    expect(badStyle.body.error).toContain("must be a string");
+
     const unknownStop = await post({
       type: "workflow.user.create",
       payload: {

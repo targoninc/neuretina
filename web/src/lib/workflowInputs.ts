@@ -1,6 +1,7 @@
 import type { Component } from "svelte";
 import type { Topic, WorkflowInputInfo } from "./api";
 import WorkflowInputLanguage from "../components/WorkflowInputLanguage.svelte";
+import WorkflowInputStyle from "../components/WorkflowInputStyle.svelte";
 import WorkflowInputTopics from "../components/WorkflowInputTopics.svelte";
 
 /** Props every workflow input editor receives; values are input ids. */
@@ -17,4 +18,5 @@ export interface WorkflowInputEditorProps {
 export const WORKFLOW_INPUT_EDITORS: Record<string, Component<WorkflowInputEditorProps>> = {
   topics: WorkflowInputTopics,
   language: WorkflowInputLanguage,
+  style: WorkflowInputStyle,
 };

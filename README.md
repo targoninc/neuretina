@@ -494,6 +494,12 @@ the Workflows tab.
   single report, and the researcher can pull concrete market numbers (quotes, revenue, margins,
   guidance, estimates) through the finance tools (Perplexity's Agent API, or keyless Yahoo Finance
   quotes) when a topic involves a public company or the markets.
+- **Briefing style:** workflows take an optional **Style** description, with presets (Analyst,
+  Executive, Casual, Deep dive, Skeptical, Plain English) that fill the editable text. The
+  description is passed as house-style guidance to the compiler and to the implications and
+  primary-source passes, so the report's voice stays consistent. The hard rules still win:
+  neutral reporting, inline citations, the brevity budget and one paragraph per subtopic — style
+  changes how the report sounds, never what it may claim. An empty style keeps the default voice.
 - **Delivery is two messages by default:** the compiled summary as a formatted text message
   (markdown rendered to Matrix `formatted_body`) followed by the voice message. The summary is
   written for spoken delivery under a hard brevity budget (under ~150 words) — the compiler is
@@ -547,8 +553,9 @@ the Workflows tab.
 - On first boot a default job for the first registered workflow is seeded with `DEFAULT_BRIEF_CRON`
   (default daily 07:00). Edit it in the UI, or create additional tasks — any registered workflow
   can be scheduled (currently `briefing`).
-- Workflows accept an input object, e.g. `{"topics": ["Rust"], "deliver": false}` for a
-  research-only run.
+- Workflows accept an input object, e.g.
+  `{"topics": ["Rust"], "inputs": {"style": "Write like a sharp analyst note."}, "deliver": false}`
+  for a research-only run in a custom voice.
 
 ## Message gateway
 

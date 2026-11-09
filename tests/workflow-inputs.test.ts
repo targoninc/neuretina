@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import {
+  BRIEFING_STYLE_MAX_LENGTH,
+  BRIEFING_STYLE_PRESETS,
+  briefingStyleName,
+} from "../src/core/briefingStyle.ts";
 import type { WorkflowInputSpec } from "../src/core/workflow/definition.ts";
 import { WorkflowInputRegistry, type WorkflowInputKind } from "../src/core/workflow/inputs.ts";
 import { TopicRepository } from "../src/domain/topics/TopicRepository.ts";
@@ -17,6 +22,14 @@ const LANGUAGE_SPEC: WorkflowInputSpec = {
   id: "language",
   kind: "language",
   title: "Language",
+  required: false,
+  multiple: false,
+};
+
+const STYLE_SPEC: WorkflowInputSpec = {
+  id: "style",
+  kind: "style",
+  title: "Style",
   required: false,
   multiple: false,
 };
@@ -111,6 +124,59 @@ describe("workflow input registry", () => {
     expect(
       inputs.resolveContext([LANGUAGE_SPEC], {}, { topics }, { contextId: "default" }),
     ).toEqual({ language: undefined });
+  });
+
+  test("parses a style description: trims, rejects non-strings and caps length", () => {
+    const topics = topicStore();
+    const inputs = createWorkflowInputs();
+
+    expect(
+      inputs.parseInputs([STYLE_SPEC], { style: "  Measured and data-forward.  " }, { topics }, {
+        requireFilled: true,
+      }),
+    ).toEqual({ style: "Measured and data-forward." });
+
+    // Empty means "use the default briefing voice".
+    const empty = inputs.parseInputs([STYLE_SPEC], { style: "" }, { topics }, {
+      requireFilled: true,
+    });
+    expect(empty.style).toBeUndefined();
+
+    expect(() =>
+      inputs.parseInputs([STYLE_SPEC], { style: 42 }, { topics }, { requireFilled: true }),
+    ).toThrow(/must be a string/);
+    expect(() =>
+      inputs.parseInputs(
+        [STYLE_SPEC],
+        { style: "x".repeat(BRIEFING_STYLE_MAX_LENGTH + 1) },
+        { topics },
+        { requireFilled: true },
+      ),
+    ).toThrow(/at most/);
+  });
+
+  test("style presets fit the input limit and match back to their names", () => {
+    for (const preset of BRIEFING_STYLE_PRESETS) {
+      expect(preset.instruction.length).toBeLessThanOrEqual(BRIEFING_STYLE_MAX_LENGTH);
+      expect(briefingStyleName(preset.instruction)).toBe(preset.name);
+    }
+
+    expect(briefingStyleName("  Write like a pirate.  ")).toBe("Custom");
+    expect(briefingStyleName("")).toBeUndefined();
+  });
+
+  test("resolves the style into the run context", () => {
+    const topics = topicStore();
+    const inputs = createWorkflowInputs();
+
+    expect(
+      inputs.resolveContext([STYLE_SPEC], { style: "Write like an analyst." }, { topics }, {
+        contextId: "default",
+      }),
+    ).toEqual({ style: "Write like an analyst." });
+    expect(
+      inputs.resolveContext([STYLE_SPEC], {}, { topics }, { contextId: "default" }),
+    ).toEqual({ style: undefined });
   });
 
   test("a newly registered context kind flows through parse and resolve", () => {

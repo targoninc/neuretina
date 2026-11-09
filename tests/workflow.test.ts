@@ -1145,5 +1145,43 @@ describe("BriefingWorkflow", () => {
 
     expect(compilerInputs[0]).toContain('"language":"English"');
   });
+
+  test("passes the configured style to the compiler, implications and source passes", async () => {
+    const { workflow, topics, bus, statuses, compilerInputs, llmRequests } = setup({
+      followups: true,
+    });
+    topics.add({ name: "Rust" });
+    const style = "Write like a sharp analyst note: measured and data-forward.";
+
+    const output = await workflow.run(
+      { inputs: { style }, deliver: false, generateAudio: false },
+      { correlationId: "c-style", bus, logger: log, statuses },
+    );
+
+    expect(output.skipped).toBe(false);
+    expect(compilerInputs[0]).toContain(JSON.stringify(style));
+
+    const implications = llmRequests.find((request) =>
+      (request.messages[0]?.content ?? "").includes("Implications"),
+    );
+    expect(implications?.messages[1]?.content).toContain(JSON.stringify(style));
+
+    const upgrades = llmRequests.find((request) =>
+      (request.messages[0]?.content ?? "").includes("source upgrades"),
+    );
+    expect(upgrades?.messages[1]?.content).toContain(JSON.stringify(style));
+  });
+
+  test("leaves the style out of the prompts when none is configured", async () => {
+    const { workflow, topics, bus, statuses, compilerInputs } = setup();
+    topics.add({ name: "Rust" });
+
+    await workflow.run(
+      { deliver: false, generateAudio: false },
+      { correlationId: "c-style-default", bus, logger: log, statuses },
+    );
+
+    expect(compilerInputs[0]).not.toContain('"style"');
+  });
 });
 
