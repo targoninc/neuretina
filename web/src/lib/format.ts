@@ -22,6 +22,11 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+/** USD amount with exactly two decimals. */
+export function formatUsd(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
 /** Relative time like "5 minutes ago" or "yesterday". */
 export function formatRelativeTime(
   ts: number | undefined,

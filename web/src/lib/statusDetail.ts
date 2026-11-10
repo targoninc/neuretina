@@ -61,8 +61,3 @@ export function formatStatusValue(value: unknown): string {
     return String(value);
   }
 }
-
-/** Compact USD formatting for feed rows. */
-export function formatStatusCost(value: number): string {
-  return value >= 0.01 ? `$${value.toFixed(2)}` : `$${value.toFixed(4)}`;
-}

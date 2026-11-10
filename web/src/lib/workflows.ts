@@ -2,6 +2,7 @@ import iconHistory from "@ktibow/iconset-material-symbols/history";
 import iconInfo from "@ktibow/iconset-material-symbols/info";
 import { briefingStyleName } from "../../../src/core/briefingStyle.ts";
 import type { WorkflowInfo, WorkflowRunDetail, WorkflowRunInfo } from "./api";
+import { formatDuration, formatUsd } from "./format";
 
 /** Tabs shown right of the workflow list. */
 export const WORKFLOW_TABS = [
@@ -88,12 +89,7 @@ export function triggerLabel(run: WorkflowRunInfo): string {
 
 export function durationLabel(run: WorkflowRunInfo): string {
   if (!run.finishedAt) return "running…";
-  const ms = run.finishedAt - run.startedAt;
-  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
-}
-
-export function formatUsd(value: number): string {
-  return value >= 0.01 ? `$${value.toFixed(2)}` : `$${value.toFixed(4)}`;
+  return formatDuration(run.finishedAt - run.startedAt);
 }
 
 export function costLabel(cost: { totalUsd: number; complete: boolean }): string {

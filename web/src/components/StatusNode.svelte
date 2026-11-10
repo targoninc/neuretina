@@ -4,9 +4,9 @@
   import iconExpandMore from "@ktibow/iconset-material-symbols/expand-more";
   import iconTerminal from "@ktibow/iconset-material-symbols/terminal";
   import { clock } from "../lib/clock.svelte";
-  import { formatDuration } from "../lib/format";
+  import { formatDuration, formatUsd } from "../lib/format";
   import type { OrderedStatusEntry } from "../lib/statusOrder";
-  import { formatStatusCost, parseToolDetail } from "../lib/statusDetail";
+  import { parseToolDetail } from "../lib/statusDetail";
   import PulseDot from "./PulseDot.svelte";
   import StatusNode from "./StatusNode.svelte";
   import ToolCallDetail from "./ToolCallDetail.svelte";
@@ -96,7 +96,7 @@
       {/if}
     </span>
     {#if entry.costUsd && entry.costUsd > 0}
-      <span class="cost">{formatStatusCost(entry.costUsd)}</span>
+      <span class="cost">{formatUsd(entry.costUsd)}</span>
     {/if}
     <span class="duration" title={`Started ${new Date(entry.startedAt).toLocaleTimeString()}`}>
       {formatDuration(durationMs)}

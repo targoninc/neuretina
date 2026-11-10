@@ -1,7 +1,8 @@
 <script lang="ts">
   import { ListItem } from "m3-svelte";
   import type { WorkflowInfo, WorkflowRunInfo } from "../lib/api";
-  import { formatDateTime } from "../lib/format";
+  import { clock } from "../lib/clock.svelte";
+  import { formatRelativeTime } from "../lib/format";
   import { costLabel, durationLabel, triggerLabel } from "../lib/workflows";
   import DataList from "./DataList.svelte";
   import Pane from "./Pane.svelte";
@@ -26,7 +27,7 @@
             onclick={() => onopen(run.id)}
             overline={triggerLabel(run)}
             headline={`${run.workflow} · ${run.contextId}`}
-            supporting={`${formatDateTime(run.startedAt)} · ${durationLabel(run)}${run.cost ? ` · ${costLabel(run.cost)}` : ""}`}
+            supporting={`${formatRelativeTime(run.startedAt, clock.now)} · ${durationLabel(run)}${run.cost ? ` · ${costLabel(run.cost)}` : ""}`}
           >
             {#snippet leading()}
               <RunStatusIcon status={run.status} />
